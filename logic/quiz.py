@@ -17,11 +17,10 @@ def start_quiz_level(uid, state, cache, level):
     state["quiz"]["level"] = level
     state["quiz"]["idx"] = 0
     
-    # --- CẬP NHẬT TÊN CẤP ĐỘ ---
     titles = {
         1: "CẤP 1: NHÌN HÁN -> ĐOÁN NGHĨA", 
         2: "CẤP 2: NHÌN NGHĨA -> VIẾT HÁN", 
-        3: "CẤP 3: NGHE AUDIO -> DỊCH NGHĨA" # <--- Đã sửa thành Dịch nghĩa
+        3: "CẤP 3: NGHE AUDIO -> DỊCH NGHĨA"
     }
     
     fb_service.send_text(uid, f"🛑 **KIỂM TRA {titles.get(level, 'CUỐI')}**\n(Cần đúng {len(state['session'])}/{len(state['session'])} câu)")
@@ -77,7 +76,6 @@ def send_question(uid, state, cache):
     elif lvl == 2:
         msg = f"❓ ({q['idx']+1}/{len(q['queue'])}) Viết chữ Hán cho: **{word['Nghĩa']}**"
     elif lvl == 3:
-        # --- CẬP NHẬT CÂU HỎI LEVEL 3 ---
         msg = f"🎧 ({q['idx']+1}/{len(q['queue'])}) Nghe và viết **NGHĨA Tiếng Việt** (Audio đang gửi...)"
         threading.Thread(target=fb_service.send_audio, args=(uid, word['Hán tự'])).start()
 
@@ -88,8 +86,7 @@ def handle_answer(uid, text, state, cache):
     q = state["quiz"]
     
     # Bảo vệ lỗi index
-    if q["idx"] >= len(q["queue"]):
-        return # Tránh crash
+    if q["idx"] >= len(q["queue"]): return
 
     w_idx = q["queue"][q["idx"]]
     word = state["session"][w_idx]
@@ -97,31 +94,33 @@ def handle_answer(uid, text, state, cache):
     
     correct = False
     
-    # --- LOGIC CHECK ĐÁP ÁN MỚI ---
-    
+    # Logic check đáp án
     # Nhóm 1: Check Nghĩa (Level 1 và Level 3)
     if q["level"] in [1, 3]: 
-        # Logic check nghĩa tương đối (chứa từ khóa)
         meanings = word['Nghĩa'].lower().replace(';', ',').split(',')
         if any(m.strip() in ans for m in meanings if len(m.strip()) > 1):
             correct = True
-        # Hoặc user gõ đúng Hán tự cũng châm chước tính là hiểu
         if word['Hán tự'] in text: correct = True
         
     # Nhóm 2: Check Hán tự (Level 2)
     elif q["level"] == 2: 
         if word['Hán tự'] in text: correct = True
 
-    if correct:
-        # --- CẬP NHẬT PHẢN HỒI KHI ĐÚNG ---
-        # Gửi lại đầy đủ thông tin từ vựng
-        reply = (f"✅ **Chính xác!**\n"
-                 f"🇨🇳 {word['Hán tự']} ({word['Pinyin']})\n"
+    # --- LOGIC MỚI: LUÔN GỬI FULL INFO KÈM AUDIO ---
+    
+    # Chuẩn bị nội dung thẻ từ
+    full_info = (f"🇨🇳 **{word['Hán tự']}** ({word['Pinyin']})\n"
                  f"🇻🇳 {word['Nghĩa']}")
-        fb_service.send_text(uid, reply)
+    
+    if correct:
+        fb_service.send_text(uid, f"✅ **Chính xác!**\n{full_info}")
     else:
-        fb_service.send_text(uid, f"❌ Sai rồi. Đáp án: {word['Hán tự']} - {word['Nghĩa']}")
+        fb_service.send_text(uid, f"❌ **Sai rồi!** Đáp án là:\n{full_info}")
         if w_idx not in q["failed"]: q["failed"].append(w_idx)
+
+    # LUÔN GỬI AUDIO (Dù đúng hay sai để ôn tập lại)
+    threading.Thread(target=fb_service.send_audio, args=(uid, word['Hán tự'])).start()
+    # -----------------------------------------------
 
     q["idx"] += 1
     database.save_user_state(uid, state, cache)
