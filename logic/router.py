@@ -43,22 +43,27 @@ def process_message(uid, text, cache):
         reply = "📚 **KHO TỪ:**\n" + "\n".join([f"- {f}: {c}" for f,c in stats])
         fb_service.send_text(uid, reply); return
 
-    # Lệnh Chọn trường
+    # Lệnh Chọn trường (ĐÃ SỬA: KHÔNG RESET TIẾN ĐỘ)
     if msg.startswith("chọn"):
         arg = msg.replace("chọn", "").strip().upper()
+        
+        # Trường hợp 1: Chọn TẤT CẢ
         if arg in ["ALL", "TẤT CẢ"]:
             stats = database.get_all_fields_stats()
             state["fields"] = [row[0] for row in stats]
-            state["session"]=[]; state["mode"]="IDLE"
+            # Lưu ý: Đã bỏ dòng reset session để giữ tiến độ học
             database.save_user_state(uid, state, cache)
-            fb_service.send_text(uid, "✅ Đã chọn TẤT CẢ. Gõ 'Bắt đầu'.")
+            fb_service.send_text(uid, "✅ Đã chọn TẤT CẢ kho.\nTiến độ học hiện tại được GIỮ NGUYÊN. Bot sẽ lấy từ mới từ tất cả các kho.")
             return
 
+        # Trường hợp 2: Chọn kho cụ thể (VD: Chọn HSK1 Chuyên_Ngành)
         arg_list = arg.replace(",", " ").split()
         if arg_list: 
-            state["fields"]=arg_list; state["session"]=[]; state["mode"]="IDLE"
+            state["fields"] = arg_list
+            # Lưu ý: Đã bỏ dòng reset session để giữ tiến độ học
             database.save_user_state(uid, state, cache)
-            fb_service.send_text(uid, "✅ Đã chọn kho. Gõ 'Bắt đầu'.")
+            fields_str = ", ".join(arg_list)
+            fb_service.send_text(uid, f"✅ Đã cập nhật kho: {fields_str}.\nTiến độ học hiện tại được GIỮ NGUYÊN.")
             return
 
     # Lệnh Start / Reset
@@ -74,11 +79,17 @@ def process_message(uid, text, cache):
     # Xử lý State Machine
     if mode == "AUTO" and state.get("waiting"): learning.handle_auto_reply(uid, text, state, cache); return
     if mode == "REVIEWING": learning.handle_review_confirm(uid, text, state, cache); return
-    if mode == "PRE_QUIZ":
+    
+    # Xử lý PRE_QUIZ và SHORT_BREAK (nếu người dùng chat trong lúc nghỉ)
+    if mode in ["PRE_QUIZ", "SHORT_BREAK"]:
         rem = state.get("next_time",0) - common.get_ts()
-        if rem > 0: fb_service.send_text(uid, f"⏳ Còn {int(rem/60)} phút nữa là kiểm tra."); return
-        from logic import quiz; quiz.start_quiz_level(uid, state, cache, 1); return
+        if rem > 0: 
+            # Có thể báo thời gian còn lại hoặc để Bot im lặng (ở đây để báo giờ cho tiện theo dõi)
+            fb_service.send_text(uid, f"⏳ Còn {int(rem/60)} phút nữa là học tiếp nha.")
+            return
+        # Nếu hết giờ mà Cronjob chưa quét tới thì có thể kích hoạt luôn tại đây (tùy chọn)
+        
     if mode == "QUIZ": from logic import quiz; quiz.handle_answer(uid, text, state, cache); return
 
-    # Chat
+    # Chat xã giao (khi không lọt vào các lệnh trên)
     fb_service.send_text(uid, ai_service.chat_reply(text))
