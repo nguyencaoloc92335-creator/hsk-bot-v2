@@ -1,71 +1,50 @@
-from logic import common, add_word, learning, quiz, pause
+from logic import common, learning, quiz, pause
 from services import ai_service, fb_service
 import database
 
 # Danh sách lệnh
-GREETINGS = ["hi", "hello", "chào", "xin chào", "hi bot", "alo"]
-CMD_MENU = ["menu", "hướng dẫn", "help", "lệnh"]
-CMD_START = ["bắt đầu", "start", "học", "tiếp tục"]
-CMD_ADD = ["thêm từ", "thêm", "add"]
-CMD_RESET = ["reset", "học lại", "xóa data"]
-
-# Lệnh Nghỉ & Resume
-CMD_PAUSE = ["nghỉ", "nghỉ ngơi", "break", "stop", "dừng", "bận", "pause"]
-CMD_RESUME = ["tiếp", "tiếp tục", "học tiếp", "resume", "back", "quay lại", "ok", "có"]
+CMD_START = ["bắt đầu", "start", "học"]
+CMD_RESET = ["reset", "học lại"]
+CMD_PAUSE = ["nghỉ", "stop", "pause"]
+CMD_RESUME = ["tiếp", "tiếp tục"]
+# Lệnh chọn trường
+CMD_SELECT = ["chọn", "học trường", "select"]
 
 def process_message(uid, text, cache):
-    # 1. KIỂM TRA GIỜ NGỦ 0H-6H
     if common.is_sleep_mode():
-        fb_service.send_text(uid, "💤 Bot đang ngủ (0h-6h). Mai quay lại nhé!")
+        fb_service.send_text(uid, "💤 Bot ngủ (0h-6h).")
         return
 
     msg = text.lower().strip()
     state = database.get_user_state(uid, cache)
-    current_mode = state.get("mode", "IDLE")
+    mode = state.get("mode", "IDLE")
 
-    # ====================================================
-    # PHẦN 1: XỬ LÝ NGHỈ & TIẾP TỤC (ƯU TIÊN CAO NHẤT)
-    # ====================================================
-    
-    # Nếu user muốn quay lại học (Resume)
-    if msg in CMD_RESUME:
-        if current_mode == "PAUSED":
-            pause.resume(uid, state, cache)
-            return
-
-    # Nếu user muốn Nghỉ (Pause)
-    # Check xem câu có chứa từ khóa nghỉ và ngắn gọn (dưới 30 ký tự)
-    if any(k in msg for k in CMD_PAUSE) and len(msg) < 30:
-        pause.handle_pause(uid, text, state, cache)
-        return
+    # 1. Xử lý Chọn trường (VD: "Chọn HSK1", "Chọn HSK1, HSK2")
+    if msg.startswith("chọn") or msg.startswith("select"):
+        # Lấy phần sau chữ chọn. VD: "HSK1, HSK2"
+        requested_fields = msg.replace("chọn", "").replace("select", "").upper().replace(",", " ").split()
         
-    # Nếu đang PAUSED mà nhắn linh tinh -> Nhắc user
-    if current_mode == "PAUSED":
-        fb_service.send_text(uid, "⏸️ Bạn đang chế độ Tạm dừng.\nGõ **'Tiếp'** để học lại nhé.")
-        return
-
-    # ====================================================
-    # PHẦN 2: CÁC LỆNH MENU / SYSTEM
-    # ====================================================
-
-    if msg in CMD_MENU:
-        menu_text = (
-            "📜 **DANH SÁCH LỆNH:**\n"
-            "------------------\n"
-            "▶️ **Bắt đầu**: Vào học\n"
-            "⏸️ **Nghỉ [phút]**: Tạm dừng (VD: Nghỉ 15p)\n"
-            "➕ **Thêm từ**: Thêm từ mới\n"
-            "🔄 **Reset**: Xóa dữ liệu học lại\n"
-        )
-        fb_service.send_text(uid, menu_text)
-        return
-
-    if msg in CMD_ADD:
-        state["mode"] = "ADD_1"
-        fb_service.send_text(uid, "📝 Nhập **Hán tự** bạn muốn thêm:")
+        if not requested_fields:
+            fb_service.send_text(uid, "⚠️ Hãy ghi tên trường. VD: **Chọn HSK1** hoặc **Chọn HSK1 HSK2**")
+            return
+            
+        # Lưu vào state
+        state["fields"] = requested_fields
+        state["learned"] = [] # Reset từ đã học khi đổi trường để tránh lỗi
+        state["session"] = []
+        state["mode"] = "IDLE"
+        
         database.save_user_state(uid, state, cache)
+        fb_service.send_text(uid, f"✅ Đã chọn kho: **{', '.join(requested_fields)}**.\nGõ 'Bắt đầu' để học.")
         return
 
+    # 2. Xử lý Pause/Resume
+    if msg in CMD_RESUME:
+        if mode == "PAUSED": pause.resume(uid, state, cache); return
+    if any(k in msg for k in CMD_PAUSE) and len(msg) < 20:
+        pause.handle_pause(uid, text, state, cache); return
+
+    # 3. Lệnh cơ bản
     if msg in CMD_START:
         state["mode"] = "AUTO"
         state["session"] = []
@@ -73,39 +52,26 @@ def process_message(uid, text, cache):
         return
 
     if msg in CMD_RESET:
-        new_state = {
-            "user_id": uid, "mode": "IDLE", "learned": [], "session": [], 
-            "next_time": 0, "waiting": False, "temp_word": None, "last_greet": "", 
+        # Reset nhưng giữ lại fields đang chọn
+        current_fields = state.get("fields", ["HSK2"])
+        new_s = {
+            "user_id": uid, "mode": "IDLE", 
+            "learned": [], "session": [], 
+            "next_time": 0, "waiting": False, 
+            "fields": current_fields, # Giữ nguyên lựa chọn
             "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0}
         }
-        database.save_user_state(uid, new_state, cache)
-        fb_service.send_text(uid, "🔄 Đã Reset. Gõ 'Bắt đầu' để học.")
+        database.save_user_state(uid, new_s, cache)
+        fb_service.send_text(uid, "🔄 Đã Reset dữ liệu học.")
         return
 
-    if msg in GREETINGS:
-        fb_service.send_text(uid, "👋 Chào bạn! Gõ 'Menu' hoặc 'Bắt đầu' nhé.")
+    if msg == "menu":
+        fb_service.send_text(uid, "📜 **MENU**\n- **Chọn HSK1**: Chọn kho học\n- **Bắt đầu**: Vào học\n- **Nghỉ**: Tạm dừng\n- **Reset**: Xóa data cá nhân")
         return
 
-    # ====================================================
-    # PHẦN 3: XỬ LÝ THEO TRẠNG THÁI (ADD, QUIZ, AUTO)
-    # ====================================================
+    # 4. State Machine
+    if mode == "QUIZ": quiz.handle_answer(uid, text, state, cache); return
+    if mode == "AUTO" and state.get("waiting"): learning.handle_auto_reply(uid, text, state, cache); return
 
-    if current_mode.startswith("ADD_"):
-        add_word.handle(uid, text, state, cache)
-        return
-
-    if current_mode == "QUIZ":
-        quiz.handle_answer(uid, text, state, cache)
-        return
-
-    if current_mode == "AUTO":
-        if state.get("waiting"):
-            learning.handle_auto_reply(uid, text, state, cache)
-            return
-
-    # ====================================================
-    # PHẦN 4: AI CHAT (CUỐI CÙNG)
-    # ====================================================
-    
-    ai_reply = ai_service.chat_reply(text)
-    fb_service.send_text(uid, ai_reply)
+    # 5. AI Chat
+    fb_service.send_text(uid, ai_service.chat_reply(text))
