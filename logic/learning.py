@@ -10,7 +10,7 @@ def send_next_word(uid, state, cache):
     # Lấy fields người dùng chọn
     target_fields = state.get("fields", ["HSK1"])
     
-    # Lấy 1 từ mới từ DB
+    # Lấy 1 từ mới từ DB (trừ những từ đã học trong session này)
     current_session_hanzi = [x['Hán tự'] for x in state['session']]
     exclude_list = state.get("learned", []) + current_session_hanzi
     
@@ -55,30 +55,50 @@ def handle_auto_reply(uid, text, state, cache):
         
         count = len(state["session"])
         
-        # LOGIC MỚI: Cứ 2 từ nghỉ 9 phút, đủ 12 từ thì nghỉ chờ thi
+        # ========================================================
+        # LOGIC NGHỈ NGƠI & TỔNG HỢP (Updated)
+        # ========================================================
         
-        # 1. Nếu đã đủ 12 từ -> Chuyển sang chế độ Chờ Kiểm Tra (PRE_QUIZ)
+        # 1. MỐC 12 TỪ: Tổng hợp + Nghỉ chờ Thi (PRE_QUIZ)
         if count >= 12:
             state["mode"] = "PRE_QUIZ"
             state["next_time"] = common.get_ts() + 540 # 9 phút
-            fb_service.send_text(uid, "🛑 **ĐỦ 12 TỪ**\nBạn hãy nghỉ ngơi 9 phút để não bộ ghi nhớ.\nSau đó chúng ta sẽ làm bài kiểm tra tổng kết nhé!")
+            
+            # Tổng hợp 6 từ cuối (7-12)
+            review_words = state["session"][6:12]
+            review_msg = "\n".join([f"• {w['Hán tự']}: {w['Nghĩa']}" for w in review_words])
+            
+            fb_service.send_text(uid, f"🛑 **ĐỦ 12 TỪ**\nTổng hợp 6 từ cuối:\n{review_msg}\n\n☕ Nghỉ 9 phút rồi làm bài kiểm tra nhé!")
             database.save_user_state(uid, state, cache)
             return
 
-        # 2. Nếu là bội số của 2 (2, 4, 6, 8, 10) -> Nghỉ ngắn (SHORT_BREAK)
-        if count % 2 == 0:
-            state["mode"] = "SHORT_BREAK" # <--- Trạng thái mới
-            state["next_time"] = common.get_ts() + 540 # 9 phút (540 giây)
+        # 2. MỐC 6 TỪ: Tổng hợp đặc biệt + Nghỉ ngắn (SHORT_BREAK)
+        if count == 6:
+            state["mode"] = "SHORT_BREAK"
+            state["next_time"] = common.get_ts() + 540 # 9 phút
             
-            # Gửi tin nhắn tổng kết 2 từ vừa học
+            # Tổng hợp cả 6 từ đầu tiên (1-6)
+            review_words = state["session"][0:6]
+            review_msg = "\n".join([f"• {w['Hán tự']}: {w['Nghĩa']}" for w in review_words])
+            
+            fb_service.send_text(uid, f"🌟 **CHẶNG 1 HOÀN THÀNH** (6/12)\nDanh sách ôn tập:\n{review_msg}\n\n⏳ Bot sẽ gọi bạn dậy học tiếp sau 9 phút nữa.")
+            database.save_user_state(uid, state, cache)
+            return
+
+        # 3. CÁC MỐC CHẴN KHÁC (2, 4, 8, 10): Tổng hợp nhỏ + Nghỉ ngắn (SHORT_BREAK)
+        if count % 2 == 0:
+            state["mode"] = "SHORT_BREAK"
+            state["next_time"] = common.get_ts() + 540 # 9 phút
+            
+            # Chỉ nhắc lại 2 từ vừa học
             words_2 = state["session"][-2:]
             review_msg = "\n".join([f"- {w['Hán tự']}: {w['Nghĩa']}" for w in words_2])
             
-            fb_service.send_text(uid, f"☕ **GIẢI LAO 9 PHÚT**\nĐã học xong 2 từ:\n{review_msg}\n\n⏳ Bot sẽ tự gọi bạn dậy học tiếp sau 9 phút nữa.")
+            fb_service.send_text(uid, f"☕ **GIẢI LAO 9 PHÚT**\nĐã học xong 2 từ:\n{review_msg}\n\n⏳ Hết giờ Bot sẽ tự gọi bạn.")
             database.save_user_state(uid, state, cache)
             return
             
-        # 3. Nếu chưa rơi vào mốc nghỉ -> Gửi từ tiếp theo
+        # 4. CÁC MỐC LẺ (1, 3, 5...): Học tiếp ngay
         fb_service.send_text(uid, "✅ Chính xác! Từ tiếp theo:")
         time.sleep(1)
         send_next_word(uid, state, cache)
@@ -86,5 +106,5 @@ def handle_auto_reply(uid, text, state, cache):
     else:
         fb_service.send_text(uid, f"⚠️ Gõ lại từ **{cur}** để nhớ mặt chữ nhé.")
 
-# Các hàm khác như send_review_list, handle_review_confirm có thể giữ lại hoặc bỏ tùy bạn, 
-# nhưng với logic trên thì chúng không còn được gọi nữa.
+# Lưu ý: Hàm send_review_list và handle_review_confirm cũ không còn dùng nữa,
+# có thể xóa hoặc để đó cũng không ảnh hưởng.
