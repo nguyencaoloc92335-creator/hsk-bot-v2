@@ -56,26 +56,33 @@ def process_message(uid, text, cache):
         learning.send_next_word(uid, state, cache); return
 
     if msg in CMD_RESET:
-        s_new = {"user_id": uid, "mode": "IDLE", "learned": [], "session": [], "fields": state.get("fields", ["HSK1"]), "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0}}
+        # --- CẬP NHẬT: GIỮ LẠI TRẠNG THÁI CHÀO HỎI ---
+        s_new = {
+            "user_id": uid, 
+            "mode": "IDLE", 
+            "learned": [], 
+            "session": [], 
+            "fields": state.get("fields", ["HSK1"]), 
+            "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0},
+            # Giữ lại thông tin đã chào hay chưa
+            "last_greet": state.get("last_greet"),
+            "last_goodnight": state.get("last_goodnight")
+        }
         database.save_user_state(uid, s_new, cache)
-        fb_service.send_text(uid, "🔄 Đã Reset."); return
+        fb_service.send_text(uid, "🔄 Đã Reset toàn bộ tiến độ học (Bot vẫn nhớ đã chào bạn hôm nay)."); return
 
-    # 3. XỬ LÝ TRẠNG THÁI HỌC (AUTO/REVIEW)
+    # 3. XỬ LÝ TRẠNG THÁI HỌC
     if mode == "AUTO" and state.get("waiting"): learning.handle_auto_reply(uid, text, state, cache); return
     if mode == "REVIEWING": learning.handle_review_confirm(uid, text, state, cache); return
     
-    # 4. XỬ LÝ NGHỈ GIẢI LAO (PRE_QUIZ / SHORT_BREAK)
-    # Đây là đoạn logic quan trọng giúp Bot "tự tỉnh" khi bạn nhắn tin
+    # 4. XỬ LÝ NGHỈ GIẢI LAO (DỰ PHÒNG KHI USER NHẮN TIN)
     if mode in ["PRE_QUIZ", "SHORT_BREAK"]:
         rem = state.get("next_time",0) - common.get_ts()
-        
-        # Nếu chưa hết giờ
         if rem > 0: 
             fb_service.send_text(uid, f"⏳ Còn {int(rem/60)+1} phút nữa là học tiếp nha.")
             return
-            
-        # Nếu ĐÃ HẾT GIỜ (rem <= 0) mà Bot chưa tự gọi -> Kích hoạt luôn
         else:
+            # Hết giờ mà Bot chưa tự gọi -> Gọi luôn
             if mode == "SHORT_BREAK":
                 fb_service.send_text(uid, "🔔 **HẾT GIỜ NGHỈ!**\nHọc tiếp luôn nhé.")
                 state["mode"] = "AUTO"
@@ -83,7 +90,6 @@ def process_message(uid, text, cache):
                 database.save_user_state(uid, state, cache)
                 learning.send_next_word(uid, state, cache)
                 return
-                
             if mode == "PRE_QUIZ":
                 fb_service.send_text(uid, "🔔 **VÀO THI THÔI!**")
                 quiz.start_quiz_level(uid, state, cache, 1)
