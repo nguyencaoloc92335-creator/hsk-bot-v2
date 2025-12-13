@@ -2,64 +2,52 @@ import google.generativeai as genai
 import json
 import re
 import logging
-from config import GEMINI_API_KEY
+import os # Import os để lấy key từ biến môi trường
 
 logger = logging.getLogger(__name__)
+
+# LẤY KEY TỪ BIẾN MÔI TRƯỜNG (AN TOÀN TUYỆT ĐỐI)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 model = None
 
 def setup_and_auto_pick_model():
-    """
-    Hàm này KHÔNG đoán tên model.
-    Nó hỏi Google danh sách và lấy cái đầu tiên dùng được.
-    """
     global model
     if not GEMINI_API_KEY:
-        logger.error("❌ Chưa có GEMINI_API_KEY")
+        logger.error("❌ Chưa cấu hình GEMINI_API_KEY trong Environment Variables!")
         return
 
     try:
         genai.configure(api_key=GEMINI_API_KEY)
+        # Ưu tiên tìm Flash hoặc Pro
+        target_models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
         
-        logger.info("🔍 ĐANG QUÉT DANH SÁCH MODEL TỪ TÀI KHOẢN CỦA BẠN...")
-        
-        found_model_name = None
-        
-        # Gọi hàm ListModels như gợi ý của Google
-        for m in genai.list_models():
-            # In ra log để bạn xem có những cái gì
-            logger.info(f"👉 Tìm thấy: {m.name} | Method: {m.supported_generation_methods}")
-            
-            # Chỉ lấy model hỗ trợ tạo nội dung (generateContent)
-            if 'generateContent' in m.supported_generation_methods:
-                # Ưu tiên lấy bản Flash hoặc Pro nếu thấy
-                if 'flash' in m.name:
-                    found_model_name = m.name
-                    break # Tìm thấy Flash là chốt luôn
-                
-                # Nếu chưa có Flash, tạm lưu cái này lại (ví dụ gemini-pro)
-                if not found_model_name:
-                    found_model_name = m.name
+        # Lấy danh sách thực tế
+        available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        logger.info(f"📋 Các model khả dụng: {available}")
 
-        if found_model_name:
-            logger.info(f"✅ CHỐT DÙNG MODEL: {found_model_name}")
-            # Khởi tạo model với cái tên chính xác vừa tìm được
-            model = genai.GenerativeModel(found_model_name)
-            
-            # Test ngay lập tức
-            try:
-                model.generate_content("Test connection")
-                logger.info("🎉 KẾT NỐI AI THÀNH CÔNG RỰC RỠ!")
-            except Exception as e:
-                logger.error(f"⚠️ Model {found_model_name} khởi tạo được nhưng lỗi khi gọi: {e}")
+        chosen_model = None
+        # Thuật toán tìm model:
+        for target in target_models:
+            for real in available:
+                if target in real:
+                    chosen_model = real
+                    break
+            if chosen_model: break
+        
+        # Fallback nếu không khớp tên nào (lấy cái đầu tiên)
+        if not chosen_model and available:
+            chosen_model = available[0]
+
+        if chosen_model:
+            logger.info(f"✅ Đã chọn Model: {chosen_model}")
+            model = genai.GenerativeModel(chosen_model)
         else:
-            logger.error("❌ KHÔNG TÌM THẤY BẤT KỲ MODEL NÀO CHO PHÉP GENERATE CONTENT.")
+            logger.error("❌ Không tìm thấy Model nào dùng được!")
 
     except Exception as e:
-        logger.error(f"❌ LỖI NGHIÊM TRỌNG KHI QUÉT MODEL: {e}")
-        model = None
+        logger.error(f"❌ Lỗi khởi tạo AI: {e}")
 
-# Chạy hàm này ngay khi khởi động
 setup_and_auto_pick_model()
 
 def clean_json_response(text):
@@ -73,13 +61,10 @@ def clean_json_response(text):
 def lookup_word(text):
     if not model: return None
     try:
-        # Prompt đơn giản
         prompt = f"""Tra từ: "{text}". Trả JSON: {{\"hanzi\": \"{text}\", \"pinyin\": \"...\", \"meaning\": \"...\"}}. Nếu ko phải từ có nghĩa trả null."""
         response = model.generate_content(prompt)
         return clean_json_response(response.text)
-    except Exception as e:
-        logger.error(f"Tra từ lỗi: {e}")
-        return None
+    except: return None
 
 def generate_example(word):
     hanzi = word.get('Hán tự','')
@@ -94,8 +79,9 @@ def generate_example(word):
     except: return backup
 
 def chat_reply(text):
-    if not model: return "Hệ thống AI đang bảo trì (Lỗi Model)."
+    if not model: return "Bot đang bảo trì AI."
     try:
-        response = model.generate_content(f"Bạn là bot tiếng Trung. User: '{text}'. Trả lời ngắn gọn tiếng Việt.")
+        # Prompt đơn giản để tiết kiệm token
+        response = model.generate_content(f"User: '{text}'. Trả lời ngắn gọn tiếng Việt.")
         return response.text.strip()
     except: return "Hệ thống bận."
