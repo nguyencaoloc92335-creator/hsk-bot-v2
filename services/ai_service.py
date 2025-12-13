@@ -8,7 +8,11 @@ logger = logging.getLogger(__name__)
 
 model = None
 
-def setup_model():
+def setup_and_auto_pick_model():
+    """
+    Hàm này KHÔNG đoán tên model.
+    Nó hỏi Google danh sách và lấy cái đầu tiên dùng được.
+    """
     global model
     if not GEMINI_API_KEY:
         logger.error("❌ Chưa có GEMINI_API_KEY")
@@ -17,30 +21,50 @@ def setup_model():
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         
-        # --- THAY ĐỔI QUAN TRỌNG ---
-        # Không dùng 'gemini-1.5-flash' nữa vì tài khoản bạn bị lỗi 404
-        # Quay về dùng 'gemini-pro' (Bản ổn định nhất toàn cầu)
-        model_name = 'gemini-pro'
+        logger.info("🔍 ĐANG QUÉT DANH SÁCH MODEL TỪ TÀI KHOẢN CỦA BẠN...")
         
-        logger.info(f"🔄 Đang kết nối với model: {model_name}...")
-        model = genai.GenerativeModel(model_name)
+        found_model_name = None
         
-        # Gửi thử 1 tin test ngay khi khởi động để check lỗi
-        response = model.generate_content("Hello")
-        logger.info("✅ KẾT NỐI AI THÀNH CÔNG! (Model đang sống)")
-        
+        # Gọi hàm ListModels như gợi ý của Google
+        for m in genai.list_models():
+            # In ra log để bạn xem có những cái gì
+            logger.info(f"👉 Tìm thấy: {m.name} | Method: {m.supported_generation_methods}")
+            
+            # Chỉ lấy model hỗ trợ tạo nội dung (generateContent)
+            if 'generateContent' in m.supported_generation_methods:
+                # Ưu tiên lấy bản Flash hoặc Pro nếu thấy
+                if 'flash' in m.name:
+                    found_model_name = m.name
+                    break # Tìm thấy Flash là chốt luôn
+                
+                # Nếu chưa có Flash, tạm lưu cái này lại (ví dụ gemini-pro)
+                if not found_model_name:
+                    found_model_name = m.name
+
+        if found_model_name:
+            logger.info(f"✅ CHỐT DÙNG MODEL: {found_model_name}")
+            # Khởi tạo model với cái tên chính xác vừa tìm được
+            model = genai.GenerativeModel(found_model_name)
+            
+            # Test ngay lập tức
+            try:
+                model.generate_content("Test connection")
+                logger.info("🎉 KẾT NỐI AI THÀNH CÔNG RỰC RỠ!")
+            except Exception as e:
+                logger.error(f"⚠️ Model {found_model_name} khởi tạo được nhưng lỗi khi gọi: {e}")
+        else:
+            logger.error("❌ KHÔNG TÌM THẤY BẤT KỲ MODEL NÀO CHO PHÉP GENERATE CONTENT.")
+
     except Exception as e:
-        logger.error(f"❌ LỖI KHỞI TẠO AI: {e}")
+        logger.error(f"❌ LỖI NGHIÊM TRỌNG KHI QUÉT MODEL: {e}")
         model = None
 
-# Khởi tạo ngay
-setup_model()
+# Chạy hàm này ngay khi khởi động
+setup_and_auto_pick_model()
 
 def clean_json_response(text):
-    """Hàm làm sạch JSON (Gemini Pro hay trả về markdown dư thừa)"""
     try:
         text = text.replace('```json', '').replace('```', '').strip()
-        # Tìm đoạn bắt đầu bằng { và kết thúc bằng }
         match = re.search(r'\{.*\}', text, re.DOTALL)
         if match: return json.loads(match.group())
         return json.loads(text)
@@ -49,16 +73,12 @@ def clean_json_response(text):
 def lookup_word(text):
     if not model: return None
     try:
-        # Prompt cho Gemini Pro cần rõ ràng hơn
-        prompt = f"""Bạn là từ điển. Hãy tra từ: "{text}".
-        Chỉ trả về JSON duy nhất (không giải thích):
-        {{"hanzi": "{text}", "pinyin": "phiên âm", "meaning": "nghĩa tiếng việt"}}
-        Nếu không phải từ có nghĩa, trả về null."""
-        
+        # Prompt đơn giản
+        prompt = f"""Tra từ: "{text}". Trả JSON: {{\"hanzi\": \"{text}\", \"pinyin\": \"...\", \"meaning\": \"...\"}}. Nếu ko phải từ có nghĩa trả null."""
         response = model.generate_content(prompt)
         return clean_json_response(response.text)
     except Exception as e:
-        logger.error(f"Lỗi tra từ: {e}")
+        logger.error(f"Tra từ lỗi: {e}")
         return None
 
 def generate_example(word):
@@ -67,23 +87,15 @@ def generate_example(word):
     backup = {"han": f"{hanzi}", "pinyin": "...", "viet": f"{meaning}"}
     if not model: return backup
     try:
-        prompt = f"""Đặt câu ví dụ HSK 1 cực ngắn với: {hanzi} ({meaning}).
-        Trả về JSON duy nhất:
-        {{"han": "câu chữ hán", "pinyin": "phiên âm", "viet": "dịch tiếng việt"}}"""
-        
+        prompt = f"Đặt câu ví dụ HSK 1 với: {hanzi} ({meaning}). Trả JSON: {{\"han\": \"...\", \"pinyin\": \"...\", \"viet\": \"...\"}}"
         response = model.generate_content(prompt)
         res = clean_json_response(response.text)
         return res if res else backup
     except: return backup
 
 def chat_reply(text):
-    if not model: 
-        # Nếu model = None thì báo lỗi cấu hình
-        return "Lỗi kết nối AI (Vui lòng kiểm tra Log Server)."
+    if not model: return "Hệ thống AI đang bảo trì (Lỗi Model)."
     try:
-        response = model.generate_content(f"Bạn là bot dạy tiếng Trung. User: '{text}'. Trả lời ngắn gọn bằng tiếng Việt.")
+        response = model.generate_content(f"Bạn là bot tiếng Trung. User: '{text}'. Trả lời ngắn gọn tiếng Việt.")
         return response.text.strip()
-    except Exception as e:
-        # Nếu vào đây nghĩa là Model bị lỗi khi đang chạy
-        logger.error(f"Lỗi khi chat: {e}")
-        return "Hệ thống đang bận (Lỗi xử lý AI)."
+    except: return "Hệ thống bận."
