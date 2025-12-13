@@ -6,7 +6,7 @@ from fastapi.responses import PlainTextResponse
 
 import database
 import config
-from logic import router, common, learning, quiz # <--- Import thêm quiz
+from logic import router, common, learning, quiz
 from services import fb_service
 
 logging.basicConfig(level=logging.INFO)
@@ -36,39 +36,51 @@ def trigger_scan():
                     
                     uid = s["user_id"]
                     mode = s.get("mode", "IDLE")
+                    now = common.get_ts()
+                    next_time = s.get("next_time", 0)
 
-                    # 1. Xử lý PRE_QUIZ (Chờ 9 phút sau khi học 12 từ)
+                    # --- LOGIC MỚI THÊM VÀO ---
+                    # 1. Xử lý nghỉ ngắn giữa giờ (SHORT_BREAK) - Sau 9 phút thì học tiếp
+                    if mode == "SHORT_BREAK":
+                        if now >= next_time:
+                            fb_service.send_text(uid, "🔔 **HẾT GIỜ GIẢI LAO!**\nQuay lại học tiếp 2 từ mới nhé.")
+                            
+                            # Cập nhật cache và DB
+                            s["mode"] = "AUTO"
+                            s["waiting"] = False # Reset cờ đợi
+                            USER_CACHE[uid] = s
+                            database.save_user_state(uid, s, USER_CACHE) # Lưu state trước để tránh lỗi
+                            
+                            # Gửi ngay từ mới
+                            learning.send_next_word(uid, s, USER_CACHE)
+                        continue
+                    # --------------------------
+
+                    # 2. Xử lý PRE_QUIZ (Chờ 9 phút sau khi học đủ 12 từ) -> Vào thi
                     if mode == "PRE_QUIZ":
-                        next_time = s.get("next_time", 0)
-                        now = common.get_ts()
-                        
-                        # Nếu đã hết giờ chờ -> Bắt đầu thi
                         if now >= next_time:
                             fb_service.send_text(uid, "🔔 **HẾT GIỜ GIẢI LAO!**\nBắt đầu bài kiểm tra 12 từ vừa học nhé.")
                             USER_CACHE[uid] = s
-                            quiz.start_quiz_level(uid, s, USER_CACHE, 1) # Bắt đầu Level 1
+                            quiz.start_quiz_level(uid, s, USER_CACHE, 1)
                         continue
 
-                    # 2. Xử lý Pause (Như bài trước - giữ nguyên)
+                    # 3. Xử lý Pause (Giữ nguyên)
                     if mode == "PAUSED":
-                        # ... (Logic pause cũ của bạn) ...
-                        pass # Bạn giữ nguyên code phần Pause ở bài trước nhé
+                        # Logic pause cũ nếu có...
+                        pass 
 
-                    # 3. Chào buổi sáng (Giữ nguyên)
+                    # 4. Chào buổi sáng (Giữ nguyên)
                     today = common.get_today_str()
                     if s.get("last_greet") != today:
                         fb_service.send_text(uid, "☀️ Chào buổi sáng! Gõ 'Bắt đầu' để học.")
                         s["last_greet"] = today
                         database.save_user_state(uid, s, USER_CACHE)
 
-                    # Lưu ý: Logic AUTO cũ (waiting time 9p cho từng từ) đã bị loại bỏ 
-                    # vì giờ chúng ta dồn 9p vào cuối 12 từ.
-                    
         finally: database.release_conn(conn)
             
     return PlainTextResponse("SCAN OK")
 
-# ... (Phần webhook giữ nguyên) ...
+# ... (Phần webhook và verify giữ nguyên như cũ) ...
 @app.post("/webhook")
 async def webhook(req: Request, bg: BackgroundTasks):
     try:
