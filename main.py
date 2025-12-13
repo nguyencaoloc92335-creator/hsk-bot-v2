@@ -16,7 +16,7 @@ USER_CACHE = {}
 
 @app.on_event("startup")
 def startup():
-    database.init_db()
+    database.init_and_sync_db()
 
 @app.get("/")
 def home():
@@ -108,3 +108,4 @@ def verify(req: Request):
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
