@@ -1,14 +1,19 @@
 import google.generativeai as genai
 import json
 import re
+import logging
 from config import GEMINI_API_KEY
+
+# Cấu hình log để soi lỗi
+logger = logging.getLogger(__name__)
 
 model = None
 try:
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
-except: pass
+except Exception as e:
+    logger.error(f"❌ Cấu hình Gemini thất bại: {e}")
 
 def lookup_word(text):
     if not model: return None
@@ -17,7 +22,9 @@ def lookup_word(text):
         res = model.generate_content(prompt).text.strip()
         res = res.replace('```json', '').replace('```', '')
         return json.loads(res)
-    except: return None
+    except Exception as e:
+        logger.error(f"❌ Lỗi tra từ: {e}") # In lỗi ra log
+        return None
 
 def generate_example(word):
     hanzi, meaning = word.get('Hán tự',''), word.get('Nghĩa','')
@@ -28,9 +35,14 @@ def generate_example(word):
         res = model.generate_content(prompt).text.strip()
         match = re.search(r'\{.*\}', res, re.DOTALL)
         return json.loads(match.group()) if match else backup
-    except: return backup
+    except Exception as e:
+        logger.error(f"❌ Lỗi tạo ví dụ: {e}")
+        return backup
 
 def chat_reply(text):
-    if not model: return "Gõ 'Menu' để xem hướng dẫn."
-    try: return model.generate_content(f"Bạn là trợ lý học tiếng Trung. User: '{text}'. Trả lời ngắn gọn tiếng Việt.").text.strip()
-    except: return "Lỗi mạng."
+    if not model: return "Gõ 'Menu' để xem hướng dẫn (Lỗi cấu hình AI)."
+    try: 
+        return model.generate_content(f"Bạn là trợ lý học tiếng Trung. User: '{text}'. Trả lời ngắn gọn tiếng Việt.").text.strip()
+    except Exception as e:
+        logger.error(f"❌ GEMINI ERROR: {e}") # Quan trọng: In lỗi cụ thể ra đây
+        return "Bot đang bị lỗi kết nối AI. Vui lòng thử lại sau."
