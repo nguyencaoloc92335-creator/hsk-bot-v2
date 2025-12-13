@@ -56,7 +56,7 @@ def handle_auto_reply(uid, text, state, cache):
         count = len(state["session"])
         
         # ========================================================
-        # LOGIC NGHỈ NGƠI & TỔNG HỢP (Updated)
+        # LOGIC NGHỈ NGƠI & TỔNG HỢP (CÓ PINYIN)
         # ========================================================
         
         # 1. MỐC 12 TỪ: Tổng hợp + Nghỉ chờ Thi (PRE_QUIZ)
@@ -64,9 +64,9 @@ def handle_auto_reply(uid, text, state, cache):
             state["mode"] = "PRE_QUIZ"
             state["next_time"] = common.get_ts() + 540 # 9 phút
             
-            # Tổng hợp 6 từ cuối (7-12)
+            # Tổng hợp 6 từ cuối (7-12) CÓ PINYIN
             review_words = state["session"][6:12]
-            review_msg = "\n".join([f"• {w['Hán tự']}: {w['Nghĩa']}" for w in review_words])
+            review_msg = "\n".join([f"• {w['Hán tự']} ({w['Pinyin']}): {w['Nghĩa']}" for w in review_words])
             
             fb_service.send_text(uid, f"🛑 **ĐỦ 12 TỪ**\nTổng hợp 6 từ cuối:\n{review_msg}\n\n☕ Nghỉ 9 phút rồi làm bài kiểm tra nhé!")
             database.save_user_state(uid, state, cache)
@@ -77,9 +77,9 @@ def handle_auto_reply(uid, text, state, cache):
             state["mode"] = "SHORT_BREAK"
             state["next_time"] = common.get_ts() + 540 # 9 phút
             
-            # Tổng hợp cả 6 từ đầu tiên (1-6)
+            # Tổng hợp cả 6 từ đầu tiên (1-6) CÓ PINYIN
             review_words = state["session"][0:6]
-            review_msg = "\n".join([f"• {w['Hán tự']}: {w['Nghĩa']}" for w in review_words])
+            review_msg = "\n".join([f"• {w['Hán tự']} ({w['Pinyin']}): {w['Nghĩa']}" for w in review_words])
             
             fb_service.send_text(uid, f"🌟 **CHẶNG 1 HOÀN THÀNH** (6/12)\nDanh sách ôn tập:\n{review_msg}\n\n⏳ Bot sẽ gọi bạn dậy học tiếp sau 9 phút nữa.")
             database.save_user_state(uid, state, cache)
@@ -90,9 +90,9 @@ def handle_auto_reply(uid, text, state, cache):
             state["mode"] = "SHORT_BREAK"
             state["next_time"] = common.get_ts() + 540 # 9 phút
             
-            # Chỉ nhắc lại 2 từ vừa học
+            # Nhắc lại 2 từ vừa học (CÓ PINYIN)
             words_2 = state["session"][-2:]
-            review_msg = "\n".join([f"- {w['Hán tự']}: {w['Nghĩa']}" for w in words_2])
+            review_msg = "\n".join([f"- {w['Hán tự']} ({w['Pinyin']}): {w['Nghĩa']}" for w in words_2])
             
             fb_service.send_text(uid, f"☕ **GIẢI LAO 9 PHÚT**\nĐã học xong 2 từ:\n{review_msg}\n\n⏳ Hết giờ Bot sẽ tự gọi bạn.")
             database.save_user_state(uid, state, cache)
@@ -105,6 +105,3 @@ def handle_auto_reply(uid, text, state, cache):
         
     else:
         fb_service.send_text(uid, f"⚠️ Gõ lại từ **{cur}** để nhớ mặt chữ nhé.")
-
-# Lưu ý: Hàm send_review_list và handle_review_confirm cũ không còn dùng nữa,
-# có thể xóa hoặc để đó cũng không ảnh hưởng.
