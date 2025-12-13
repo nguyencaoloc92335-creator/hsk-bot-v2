@@ -5,7 +5,8 @@ PAGE_ACCESS_TOKEN = "EAAbQQNNSmSMBQM5JdL7WYT15Kpz2WUip1Tte40vI75VbtRNm1O1F5mauEt
 VERIFY_TOKEN = "hsk_mat_khau_bi_mat"
 
 # Google Gemini
-GEMINI_API_KEY = "AIzaSyB5V6sgqSOZO4v5DyuEZs3msgJqUk54HqQ"
+GEMINI_API_KEY = "AIzaSyD5htW-gdXSlW1xpyGtmnLN8gzhAIxFGHg"
 
 # Database (Lấy từ biến môi trường của Render)
+
 DATABASE_URL = os.environ.get('DATABASE_URL')
