@@ -1,5 +1,6 @@
 import uvicorn
 import logging
+import json
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import PlainTextResponse
 
@@ -17,14 +18,13 @@ USER_CACHE = {}
 def startup():
     database.init_db()
 
-# --- THÊM ĐOẠN NÀY ĐỂ KHÔNG BỊ LỖI 404 TRANG CHỦ ---
 @app.get("/")
 def home():
     return PlainTextResponse("Server HSK Bot is Running!")
-# ---------------------------------------------------
 
 @app.get("/trigger_scan")
 def trigger_scan():
+    # 1. Cronjob ngủ 0h-6h
     if common.is_sleep_mode():
         return PlainTextResponse("SLEEPING MODE")
     
@@ -34,12 +34,41 @@ def trigger_scan():
             with conn.cursor() as cur:
                 cur.execute("SELECT state FROM users")
                 for row in cur.fetchall():
-                    if isinstance(row[0], str): import json; s = json.loads(row[0])
+                    if isinstance(row[0], str): s = json.loads(row[0])
                     else: s = row[0]
                     
                     uid = s["user_id"]
+                    mode = s.get("mode", "IDLE")
+
+                    # --- LOGIC XỬ LÝ PAUSE (MỚI) ---
+                    if mode == "PAUSED":
+                        p_info = s.get("pause_info", {})
+                        now = common.get_ts()
+                        
+                        # Case 1: Nghỉ CỐ ĐỊNH (FIXED)
+                        if p_info.get("type") == "FIXED":
+                            end_at = p_info.get("end_at", 0)
+                            if now >= end_at:
+                                fb_service.send_text(uid, "⏰ **Hết giờ giải lao rồi!**\nBạn đã sẵn sàng học tiếp chưa? (Gõ 'Tiếp' nhé)")
+                                # Chuyển sang nhắc mỗi 30p nếu user chưa dậy
+                                s["pause_info"]["type"] = "INDEFINITE"
+                                s["pause_info"]["last_remind"] = now
+                                database.save_user_state(uid, s, USER_CACHE)
+                        
+                        # Case 2: Nghỉ KHÔNG CỐ ĐỊNH (INDEFINITE)
+                        elif p_info.get("type") == "INDEFINITE":
+                            last_remind = p_info.get("last_remind", 0)
+                            # Nhắc mỗi 30 phút (1800 giây)
+                            if now >= last_remind + 1800:
+                                fb_service.send_text(uid, "🔔 30 phút trôi qua rồi.\nBạn đã rảnh để học tiếp chưa? (Gõ 'Tiếp' để quay lại)")
+                                s["pause_info"]["last_remind"] = now
+                                database.save_user_state(uid, s, USER_CACHE)
+                        
+                        # Đã xử lý Pause xong, bỏ qua các logic dưới
+                        continue 
+                    # -------------------------------
                     
-                    # Chào buổi sáng
+                    # 2. Chào buổi sáng
                     today = common.get_today_str()
                     if s.get("last_greet") != today:
                         fb_service.send_text(uid, "☀️ Chào buổi sáng! Gõ 'Bắt đầu' để học.")
@@ -47,8 +76,8 @@ def trigger_scan():
                         database.save_user_state(uid, s, USER_CACHE)
                         continue 
 
-                    # Gửi bài học
-                    if s["mode"]=="AUTO" and not s["waiting"] and s["next_time"]>0:
+                    # 3. Gửi bài học (Auto)
+                    if mode == "AUTO" and not s.get("waiting") and s.get("next_time", 0) > 0:
                         if common.get_ts() >= s["next_time"]:
                             USER_CACHE[uid] = s
                             learning.send_next_word(uid, s, USER_CACHE)
