@@ -17,10 +17,11 @@ def start_quiz_level(uid, state, cache, level):
     state["quiz"]["level"] = level
     state["quiz"]["idx"] = 0
     
+    # --- CẬP NHẬT TÊN CẤP ĐỘ ---
     titles = {
         1: "CẤP 1: NHÌN HÁN -> ĐOÁN NGHĨA", 
         2: "CẤP 2: NHÌN NGHĨA -> VIẾT HÁN", 
-        3: "CẤP 3: NGHE -> VIẾT HÁN"
+        3: "CẤP 3: NGHE AUDIO -> DỊCH NGHĨA" # <--- Đã sửa thành Dịch nghĩa
     }
     
     fb_service.send_text(uid, f"🛑 **KIỂM TRA {titles.get(level, 'CUỐI')}**\n(Cần đúng {len(state['session'])}/{len(state['session'])} câu)")
@@ -76,7 +77,8 @@ def send_question(uid, state, cache):
     elif lvl == 2:
         msg = f"❓ ({q['idx']+1}/{len(q['queue'])}) Viết chữ Hán cho: **{word['Nghĩa']}**"
     elif lvl == 3:
-        msg = f"🎧 ({q['idx']+1}/{len(q['queue'])}) Nghe và viết lại từ (Audio đang gửi...)"
+        # --- CẬP NHẬT CÂU HỎI LEVEL 3 ---
+        msg = f"🎧 ({q['idx']+1}/{len(q['queue'])}) Nghe và viết **NGHĨA Tiếng Việt** (Audio đang gửi...)"
         threading.Thread(target=fb_service.send_audio, args=(uid, word['Hán tự'])).start()
 
     if msg: fb_service.send_text(uid, msg)
@@ -95,19 +97,28 @@ def handle_answer(uid, text, state, cache):
     
     correct = False
     
-    if q["level"] == 1: # Check nghĩa
+    # --- LOGIC CHECK ĐÁP ÁN MỚI ---
+    
+    # Nhóm 1: Check Nghĩa (Level 1 và Level 3)
+    if q["level"] in [1, 3]: 
         # Logic check nghĩa tương đối (chứa từ khóa)
         meanings = word['Nghĩa'].lower().replace(';', ',').split(',')
         if any(m.strip() in ans for m in meanings if len(m.strip()) > 1):
             correct = True
-        # Hoặc user gõ đúng Hán tự cũng tính là hiểu
+        # Hoặc user gõ đúng Hán tự cũng châm chước tính là hiểu
         if word['Hán tự'] in text: correct = True
         
-    elif q["level"] in [2, 3]: # Check Hán tự
+    # Nhóm 2: Check Hán tự (Level 2)
+    elif q["level"] == 2: 
         if word['Hán tự'] in text: correct = True
 
     if correct:
-        fb_service.send_text(uid, "✅ Đúng!")
+        # --- CẬP NHẬT PHẢN HỒI KHI ĐÚNG ---
+        # Gửi lại đầy đủ thông tin từ vựng
+        reply = (f"✅ **Chính xác!**\n"
+                 f"🇨🇳 {word['Hán tự']} ({word['Pinyin']})\n"
+                 f"🇻🇳 {word['Nghĩa']}")
+        fb_service.send_text(uid, reply)
     else:
         fb_service.send_text(uid, f"❌ Sai rồi. Đáp án: {word['Hán tự']} - {word['Nghĩa']}")
         if w_idx not in q["failed"]: q["failed"].append(w_idx)
