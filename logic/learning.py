@@ -10,6 +10,15 @@ def send_next_word(uid, state, cache):
     # Lấy fields người dùng chọn
     target_fields = state.get("fields", ["HSK1"])
     
+    # --- LOGIC MỚI: TÍNH TIẾN ĐỘ TỔNG ---
+    # 1. Lấy tổng số từ trong các kho đang chọn
+    total_words = database.get_total_words_by_fields(target_fields)
+    
+    # 2. Tính số từ đã học (trong kho learned) + đang học (trong session)
+    # Lưu ý: Cần trừ đi nếu có từ trùng lặp (tuy nhiên logic exclude đã xử lý, ở đây tính tương đối)
+    learned_count = len(state.get("learned", [])) + len(state.get("session", []))
+    # ------------------------------------
+
     # Lấy 1 từ mới từ DB (trừ những từ đã học trong session này)
     current_session_hanzi = [x['Hán tự'] for x in state['session']]
     exclude_list = state.get("learned", []) + current_session_hanzi
@@ -17,15 +26,16 @@ def send_next_word(uid, state, cache):
     w = database.get_random_words_by_fields(exclude_list, target_fields, 1)
     
     if not w: 
-        fb_service.send_text(uid, f"🎉 Bạn đã học hết từ vựng trong kho này rồi!")
+        fb_service.send_text(uid, f"🎉 Chúc mừng! Bạn đã học hết {learned_count}/{total_words} từ vựng trong kho này!")
         return
     
     word = w[0]
     state["session"].append(word)
     state["current_word"] = word['Hán tự']
     
-    # Tạo tin nhắn thẻ từ
+    # Tạo tin nhắn thẻ từ (CÓ THÊM DÒNG TIẾN ĐỘ)
     msg = (f"🔔 **TỪ MỚI** ({len(state['session'])}/12)\n"
+           f"📈 **Tiến độ: {learned_count + 1}/{total_words}**\n"
            f"──────────────\n"
            f"🇨🇳 **{word['Hán tự']}** ({word['Pinyin']})\n"
            f"🇻🇳 {word['Nghĩa']}\n"
@@ -56,7 +66,7 @@ def handle_auto_reply(uid, text, state, cache):
         count = len(state["session"])
         
         # ========================================================
-        # LOGIC NGHỈ NGƠI & TỔNG HỢP (CÓ PINYIN)
+        # LOGIC NGHỈ NGƠI & TỔNG HỢP (GIỮ NGUYÊN NHƯ CŨ)
         # ========================================================
         
         # 1. MỐC 12 TỪ: Tổng hợp + Nghỉ chờ Thi (PRE_QUIZ)
