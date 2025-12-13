@@ -3,24 +3,28 @@ import logging
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import PlainTextResponse
 
-# Import các module đã tách
+# Import các module
 import database
 import config
 from logic import router, common, learning
 from services import fb_service
 
-# Setup
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
-USER_CACHE = {} # Cache RAM tạm thời
+USER_CACHE = {}
 
 @app.on_event("startup")
 def startup():
     database.init_db()
 
+# --- THÊM ĐOẠN NÀY ĐỂ KHÔNG BỊ LỖI 404 TRANG CHỦ ---
+@app.get("/")
+def home():
+    return PlainTextResponse("Server HSK Bot is Running!")
+# ---------------------------------------------------
+
 @app.get("/trigger_scan")
 def trigger_scan():
-    # 1. Cronjob cũng ngủ 0h-6h
     if common.is_sleep_mode():
         return PlainTextResponse("SLEEPING MODE")
     
@@ -30,13 +34,12 @@ def trigger_scan():
             with conn.cursor() as cur:
                 cur.execute("SELECT state FROM users")
                 for row in cur.fetchall():
-                    # Parse state
                     if isinstance(row[0], str): import json; s = json.loads(row[0])
                     else: s = row[0]
                     
                     uid = s["user_id"]
                     
-                    # 2. Chào buổi sáng
+                    # Chào buổi sáng
                     today = common.get_today_str()
                     if s.get("last_greet") != today:
                         fb_service.send_text(uid, "☀️ Chào buổi sáng! Gõ 'Bắt đầu' để học.")
@@ -44,7 +47,7 @@ def trigger_scan():
                         database.save_user_state(uid, s, USER_CACHE)
                         continue 
 
-                    # 3. Gửi bài học (Auto)
+                    # Gửi bài học
                     if s["mode"]=="AUTO" and not s["waiting"] and s["next_time"]>0:
                         if common.get_ts() >= s["next_time"]:
                             USER_CACHE[uid] = s
@@ -64,7 +67,6 @@ async def webhook(req: Request, bg: BackgroundTasks):
                     if 'message' in m:
                         uid = m['sender']['id']
                         text = m['message'].get('text', '')
-                        # Gọi vào Router để xử lý
                         bg.add_task(router.process_message, uid, text, USER_CACHE)
     except: pass
     return PlainTextResponse("EVENT_RECEIVED")
