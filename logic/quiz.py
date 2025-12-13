@@ -49,12 +49,15 @@ def send_question(uid, state, cache):
                 start_quiz_level(uid, state, cache, q["level"] + 1)
             else:
                 fb_service.send_text(uid, "🏆 **HOÀN THÀNH 3 CẤP ĐỘ!**\nBạn hãy nghỉ ngơi, 10 phút nữa mình sẽ gọi.")
-                state["mode"] = "AUTO"
+                
+                # --- SỬA LỖI TẠI ĐÂY ---
+                # Chuyển thành SHORT_BREAK để main.py nhận diện và đếm giờ
+                state["mode"] = "SHORT_BREAK" 
                 state["session"] = [] # Xóa session cũ
                 
-                # Hẹn giờ học tiếp
+                # Hẹn giờ học tiếp (10 phút = 600 giây)
                 from logic import common
-                state["next_time"] = common.get_ts() + 600 # 10 phút
+                state["next_time"] = common.get_ts() + 600 
                 state["waiting"] = False
                 database.save_user_state(uid, state, cache)
         return
@@ -106,7 +109,7 @@ def handle_answer(uid, text, state, cache):
     elif q["level"] == 2: 
         if word['Hán tự'] in text: correct = True
 
-    # --- LOGIC MỚI: LUÔN GỬI FULL INFO KÈM AUDIO ---
+    # --- LUÔN GỬI FULL INFO KÈM AUDIO ---
     
     # Chuẩn bị nội dung thẻ từ
     full_info = (f"🇨🇳 **{word['Hán tự']}** ({word['Pinyin']})\n"
