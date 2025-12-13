@@ -3,10 +3,7 @@ from psycopg2 import pool
 import json
 import logging
 from config import DATABASE_URL
-try:
-    from hsk_data import HSK_DATA
-except ImportError:
-    HSK_DATA = []
+from hsk_data import DATA_SOURCE # Import dữ liệu nguồn
 
 logger = logging.getLogger(__name__)
 
@@ -14,40 +11,75 @@ db_pool = None
 try:
     if DATABASE_URL:
         db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, dsn=DATABASE_URL)
-        logger.info("✅ Database connected!")
 except Exception as e:
-    logger.error(f"❌ Database connection failed: {e}")
+    logger.error(f"❌ DB Error: {e}")
 
-def get_conn():
-    return db_pool.getconn() if db_pool else None
-
-def release_conn(conn):
+def get_conn(): return db_pool.getconn() if db_pool else None
+def release_conn(conn): 
     if db_pool and conn: db_pool.putconn(conn)
 
-def init_db():
+def init_and_sync_db():
+    """Hàm này chạy khi Start server: Tạo bảng và Đồng bộ dữ liệu"""
     conn = get_conn()
     if not conn: return
     try:
         with conn.cursor() as cur:
-            cur.execute("""CREATE TABLE IF NOT EXISTS users (user_id VARCHAR(50) PRIMARY KEY, state JSONB, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);""")
-            cur.execute("""CREATE TABLE IF NOT EXISTS words (id SERIAL PRIMARY KEY, hanzi VARCHAR(50) UNIQUE NOT NULL, pinyin VARCHAR(100), meaning TEXT, level INT DEFAULT 2);""")
+            # 1. Tạo bảng Users (Giữ nguyên)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id VARCHAR(50) PRIMARY KEY, 
+                    state JSONB, 
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
             
-            # Seed data
-            cur.execute("SELECT COUNT(*) FROM words")
-            if cur.fetchone()[0] == 0 and HSK_DATA:
-                valid_data = [x for x in HSK_DATA if 'Hán tự' in x]
-                if valid_data:
-                    args_str = ','.join(cur.mogrify("(%s,%s,%s)", (x['Hán tự'], x['Pinyin'], x['Nghĩa'])).decode('utf-8') for x in valid_data)
-                    cur.execute("INSERT INTO words (hanzi, pinyin, meaning) VALUES " + args_str)
+            # 2. Xóa bảng words cũ để tái cấu trúc (Theo yêu cầu hủy kho cũ)
+            # Lưu ý: Lần đầu chạy code mới nó sẽ drop bảng cũ.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS words_new (
+                    id SERIAL PRIMARY KEY, 
+                    hanzi VARCHAR(50) NOT NULL, 
+                    pinyin VARCHAR(100), 
+                    meaning TEXT, 
+                    field VARCHAR(20) NOT NULL, -- Cột mới: Trường (HSK1, HSK2...)
+                    UNIQUE(hanzi, field)        -- Một từ có thể nằm ở nhiều trường
+                );
+            """)
+            
+            # 3. Đồng bộ dữ liệu từ hsk_data.py vào DB
+            # Duyệt qua từng trường (HSK1, HSK2...) trong file data
+            total_added = 0
+            for field_name, word_list in DATA_SOURCE.items():
+                for w in word_list:
+                    # Insert nếu chưa có, bỏ qua nếu trùng (dựa trên hanzi + field)
+                    cur.execute("""
+                        INSERT INTO words_new (hanzi, pinyin, meaning, field) 
+                        VALUES (%s, %s, %s, %s) 
+                        ON CONFLICT (hanzi, field) DO NOTHING
+                    """, (w['hanzi'], w['pinyin'], w['meaning'], field_name))
+                    if cur.rowcount > 0: total_added += 1
+            
+            logger.info(f"✅ Đã đồng bộ Database. Thêm mới: {total_added} từ.")
+            
         conn.commit()
     except Exception as e:
-        logger.error(f"Init DB Error: {e}")
+        logger.error(f"❌ Init DB Failed: {e}")
         conn.rollback()
     finally: release_conn(conn)
 
 def get_user_state(uid, cache):
     if uid in cache: return cache[uid]
-    s = {"user_id": uid, "mode": "IDLE", "learned": [], "session": [], "next_time": 0, "waiting": False, "temp_word": None, "last_greet": "", "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0}}
+    # Mặc định chọn học tất cả các trường có trong Data
+    all_fields = list(DATA_SOURCE.keys())
+    
+    s = {
+        "user_id": uid, "mode": "IDLE", 
+        "learned": [], "session": [], 
+        "next_time": 0, "waiting": False, 
+        "fields": all_fields, # Mặc định học hết
+        "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0}
+    }
+    
     conn = get_conn()
     if conn:
         try:
@@ -71,34 +103,32 @@ def save_user_state(uid, s, cache):
             conn.commit()
         finally: release_conn(conn)
 
-def get_random_words(exclude, count=1):
+def get_random_words_by_fields(exclude_list, target_fields, count=1):
+    """Lấy từ ngẫu nhiên thuộc các trường User chọn"""
     conn = get_conn()
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            if exclude:
-                cur.execute("SELECT hanzi, pinyin, meaning FROM words WHERE hanzi NOT IN %s ORDER BY RANDOM() LIMIT %s", (tuple(exclude), count))
-            else:
-                cur.execute("SELECT hanzi, pinyin, meaning FROM words ORDER BY RANDOM() LIMIT %s", (count,))
-            return [{"Hán tự": r[0], "Pinyin": r[1], "Nghĩa": r[2]} for r in cur.fetchall()]
-    except: return []
+            # Query phức tạp hơn: Lọc theo field và loại trừ từ đã học
+            query = """
+                SELECT hanzi, pinyin, meaning, field 
+                FROM words_new 
+                WHERE field = ANY(%s) 
+                AND hanzi NOT IN %s 
+                ORDER BY RANDOM() LIMIT %s
+            """
+            # Xử lý tuple rỗng cho SQL khỏi lỗi
+            exclude_tuple = tuple(exclude_list) if exclude_list else ('',)
+            
+            cur.execute(query, (target_fields, exclude_tuple, count))
+            return [{"Hán tự": r[0], "Pinyin": r[1], "Nghĩa": r[2], "Field": r[3]} for r in cur.fetchall()]
     finally: release_conn(conn)
 
-def get_total_words():
+def get_total_words_by_fields(target_fields):
     conn = get_conn()
     if not conn: return 0
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM words")
+            cur.execute("SELECT COUNT(*) FROM words_new WHERE field = ANY(%s)", (target_fields,))
             return cur.fetchone()[0]
-    finally: release_conn(conn)
-
-def add_word(hanzi, pinyin, meaning):
-    conn = get_conn()
-    if not conn: return False
-    try:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO words (hanzi, pinyin, meaning) VALUES (%s, %s, %s) ON CONFLICT (hanzi) DO NOTHING", (hanzi, pinyin, meaning))
-        conn.commit(); return True
-    except: return False
     finally: release_conn(conn)
