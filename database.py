@@ -3,7 +3,7 @@ from psycopg2 import pool
 import json
 import logging
 from config import DATABASE_URL
-from hsk_data import DATA_SOURCE # Import dữ liệu nguồn
+from hsk_data import DATA_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +19,10 @@ def release_conn(conn):
     if db_pool and conn: db_pool.putconn(conn)
 
 def init_and_sync_db():
-    """Hàm này chạy khi Start server: Tạo bảng và Đồng bộ dữ liệu"""
     conn = get_conn()
     if not conn: return
     try:
         with conn.cursor() as cur:
-            # 1. Tạo bảng Users (Giữ nguyên)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id VARCHAR(50) PRIMARY KEY, 
@@ -33,25 +31,20 @@ def init_and_sync_db():
                 );
             """)
             
-            # 2. Xóa bảng words cũ để tái cấu trúc (Theo yêu cầu hủy kho cũ)
-            # Lưu ý: Lần đầu chạy code mới nó sẽ drop bảng cũ.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS words_new (
                     id SERIAL PRIMARY KEY, 
                     hanzi VARCHAR(50) NOT NULL, 
                     pinyin VARCHAR(100), 
                     meaning TEXT, 
-                    field VARCHAR(20) NOT NULL, -- Cột mới: Trường (HSK1, HSK2...)
-                    UNIQUE(hanzi, field)        -- Một từ có thể nằm ở nhiều trường
+                    field VARCHAR(20) NOT NULL,
+                    UNIQUE(hanzi, field)
                 );
             """)
             
-            # 3. Đồng bộ dữ liệu từ hsk_data.py vào DB
-            # Duyệt qua từng trường (HSK1, HSK2...) trong file data
             total_added = 0
             for field_name, word_list in DATA_SOURCE.items():
                 for w in word_list:
-                    # Insert nếu chưa có, bỏ qua nếu trùng (dựa trên hanzi + field)
                     cur.execute("""
                         INSERT INTO words_new (hanzi, pinyin, meaning, field) 
                         VALUES (%s, %s, %s, %s) 
@@ -60,7 +53,6 @@ def init_and_sync_db():
                     if cur.rowcount > 0: total_added += 1
             
             logger.info(f"✅ Đã đồng bộ Database. Thêm mới: {total_added} từ.")
-            
         conn.commit()
     except Exception as e:
         logger.error(f"❌ Init DB Failed: {e}")
@@ -69,17 +61,13 @@ def init_and_sync_db():
 
 def get_user_state(uid, cache):
     if uid in cache: return cache[uid]
-    # Mặc định chọn học tất cả các trường có trong Data
-    all_fields = list(DATA_SOURCE.keys())
-    
     s = {
         "user_id": uid, "mode": "IDLE", 
         "learned": [], "session": [], 
         "next_time": 0, "waiting": False, 
-        "fields": all_fields, # Mặc định học hết
+        "fields": ["HSK1"], # Mặc định
         "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0}
     }
-    
     conn = get_conn()
     if conn:
         try:
@@ -104,12 +92,10 @@ def save_user_state(uid, s, cache):
         finally: release_conn(conn)
 
 def get_random_words_by_fields(exclude_list, target_fields, count=1):
-    """Lấy từ ngẫu nhiên thuộc các trường User chọn"""
     conn = get_conn()
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            # Query phức tạp hơn: Lọc theo field và loại trừ từ đã học
             query = """
                 SELECT hanzi, pinyin, meaning, field 
                 FROM words_new 
@@ -117,9 +103,7 @@ def get_random_words_by_fields(exclude_list, target_fields, count=1):
                 AND hanzi NOT IN %s 
                 ORDER BY RANDOM() LIMIT %s
             """
-            # Xử lý tuple rỗng cho SQL khỏi lỗi
             exclude_tuple = tuple(exclude_list) if exclude_list else ('',)
-            
             cur.execute(query, (target_fields, exclude_tuple, count))
             return [{"Hán tự": r[0], "Pinyin": r[1], "Nghĩa": r[2], "Field": r[3]} for r in cur.fetchall()]
     finally: release_conn(conn)
@@ -131,4 +115,15 @@ def get_total_words_by_fields(target_fields):
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM words_new WHERE field = ANY(%s)", (target_fields,))
             return cur.fetchone()[0]
+    finally: release_conn(conn)
+
+# --- HÀM MỚI THÊM: Lấy thống kê tất cả các trường ---
+def get_all_fields_stats():
+    """Trả về danh sách: [('HSK1', 150), ('HSK2', 300)]"""
+    conn = get_conn()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT field, COUNT(*) FROM words_new GROUP BY field ORDER BY field")
+            return cur.fetchall()
     finally: release_conn(conn)
