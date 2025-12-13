@@ -11,33 +11,46 @@ model = None
 
 def setup_ai():
     global model
-    if not GEMINI_API_KEY: return
+    # Lấy key từ biến môi trường cho an toàn
+    api_key = os.environ.get("GEMINI_API_KEY") or GEMINI_API_KEY
+    
+    if not api_key:
+        logger.error("❌ Chưa có API Key.")
+        return
+
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        # Tự động chọn model như code cũ của bạn
-        model = genai.GenerativeModel('gemini-pro') 
-        # (Nếu bạn đang dùng 1.5 flash thì sửa lại tên ở đây nhé)
-    except: pass
+        genai.configure(api_key=api_key)
+        # Sử dụng model 'gemini-pro' cho ổn định nhất
+        model = genai.GenerativeModel('gemini-pro')
+        logger.info("✅ AI Connected: Gemini Pro")
+    except Exception as e:
+        logger.error(f"❌ AI Init Error: {e}")
 
 setup_ai()
 
 def clean_json(text):
+    """Làm sạch dữ liệu JSON từ AI bất chấp định dạng"""
     try:
+        # Xóa các ký tự markdown thừa
         text = text.replace('```json', '').replace('```', '').strip()
+        
+        # Dùng Regex tìm đoạn bắt đầu bằng { và kết thúc bằng } xa nhất
         match = re.search(r'\{.*\}', text, re.DOTALL)
-        return json.loads(match.group()) if match else json.loads(text)
-    except: return None
+        if match:
+            return json.loads(match.group())
+        return json.loads(text)
+    except:
+        return None
 
 def generate_sentence_with_annotation(word):
-    """
-    Tạo câu ví dụ + Giải thích từ mới trong câu đó
-    """
-    hanzi = word.get('Hán tự','')
-    meaning = word.get('Nghĩa','')
+    hanzi = word.get('Hán tự', '')
+    meaning = word.get('Nghĩa', '')
+    
+    # Dữ liệu dự phòng (Fallback) nếu AI hỏng
     backup = {
-        "sentence_han": f"{hanzi}...", 
-        "sentence_pinyin": "...", 
-        "sentence_viet": "...", 
+        "sentence_han": f"{hanzi}", 
+        "sentence_pinyin": "", 
+        "sentence_viet": f"(Nghĩa: {meaning})", 
         "new_words": []
     }
     
@@ -45,31 +58,37 @@ def generate_sentence_with_annotation(word):
     
     try:
         prompt = f"""
-        Bạn là giáo viên tiếng Trung. Hãy đặt 1 câu ví dụ ngắn (HSK 1-3) sử dụng từ: "{hanzi}" (nghĩa: {meaning}).
+        Nhiệm vụ: Tạo ví dụ cho từ tiếng Trung.
+        Từ khóa: "{hanzi}" (Nghĩa: {meaning}).
         
-        Yêu cầu quan trọng:
-        1. Câu ví dụ phải hoàn chỉnh, có nghĩa.
-        2. Nếu trong câu ví dụ có sử dụng từ vựng nào khác (ngoài từ "{hanzi}" và các từ quá cơ bản như 我, 你, 是), hãy liệt kê nó vào danh sách "new_words" để giải thích cho học sinh.
+        Yêu cầu:
+        1. Đặt 1 câu tiếng Trung đơn giản (HSK 1-2).
+        2. Trả về đúng định dạng JSON bên dưới. KHÔNG giải thích gì thêm.
         
-        Trả về JSON định dạng sau (không markdown):
+        JSON mẫu:
         {{
             "sentence_han": "câu chữ hán",
-            "sentence_pinyin": "phiên âm của cả câu",
-            "sentence_viet": "dịch nghĩa cả câu",
-            "new_words": [
-                {{"han": "từ lạ 1", "pinyin": "...", "viet": "..."}},
-                {{"han": "từ lạ 2", "pinyin": "...", "viet": "..."}}
-            ]
+            "sentence_pinyin": "phiên âm",
+            "sentence_viet": "dịch tiếng việt",
+            "new_words": []
         }}
         """
         response = model.generate_content(prompt)
         data = clean_json(response.text)
-        return data if data else backup
+        
+        # Kiểm tra xem JSON có đủ trường không, nếu thiếu thì dùng backup
+        if data and 'sentence_han' in data:
+            return data
+        return backup
+        
     except Exception as e:
-        logger.error(f"AI Error: {e}")
+        logger.error(f"⚠️ Lỗi tạo ví dụ: {e}")
         return backup
 
 def chat_reply(text):
-    if not model: return "Lỗi AI."
-    try: return model.generate_content(f"User: '{text}'. Trả lời tiếng Việt ngắn gọn.").text.strip()
-    except: return "Bot bận."
+    if not model: return "Hệ thống AI đang bảo trì."
+    try:
+        res = model.generate_content(f"Bạn là trợ lý tiếng Trung. User: '{text}'. Trả lời ngắn gọn tiếng Việt.")
+        return res.text.strip()
+    except:
+        return "Máy chủ đang bận, thử lại sau nhé."
