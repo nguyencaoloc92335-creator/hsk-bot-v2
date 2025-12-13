@@ -1,94 +1,65 @@
-import google.generativeai as genai
-import json
+import random
 import re
-import logging
-import os
-from config import GEMINI_API_KEY
 
-logger = logging.getLogger(__name__)
-
-model = None
-
-def setup_ai():
-    global model
-    # Lấy key từ biến môi trường cho an toàn
-    api_key = os.environ.get("GEMINI_API_KEY") or GEMINI_API_KEY
-    
-    if not api_key:
-        logger.error("❌ Chưa có API Key.")
-        return
-
-    try:
-        genai.configure(api_key=api_key)
-        # Sử dụng model 'gemini-pro' cho ổn định nhất
-        model = genai.GenerativeModel('gemini-pro')
-        logger.info("✅ AI Connected: Gemini Pro")
-    except Exception as e:
-        logger.error(f"❌ AI Init Error: {e}")
-
-setup_ai()
-
-def clean_json(text):
-    """Làm sạch dữ liệu JSON từ AI bất chấp định dạng"""
-    try:
-        # Xóa các ký tự markdown thừa
-        text = text.replace('```json', '').replace('```', '').strip()
-        
-        # Dùng Regex tìm đoạn bắt đầu bằng { và kết thúc bằng } xa nhất
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-        return json.loads(text)
-    except:
-        return None
-
-def generate_sentence_with_annotation(word):
-    hanzi = word.get('Hán tự', '')
-    meaning = word.get('Nghĩa', '')
-    
-    # Dữ liệu dự phòng (Fallback) nếu AI hỏng
-    backup = {
-        "sentence_han": f"{hanzi}", 
-        "sentence_pinyin": "", 
-        "sentence_viet": f"(Nghĩa: {meaning})", 
-        "new_words": []
+# Dữ liệu trò chuyện được lập trình sẵn
+CHAT_DATA = {
+    "greetings": {
+        "keys": ["hi", "hello", "chào", "halo", "alo", "ê"],
+        "reply": [
+            "👋 Chào bạn! Sẵn sàng học từ vựng chưa?",
+            "Hello! Gõ 'Bắt đầu' để học nhé.",
+            "Chào bạn, chúc bạn một ngày tốt lành! ☀️"
+        ]
+    },
+    "thanks": {
+        "keys": ["cảm ơn", "thank", "tks", "ok"],
+        "reply": ["👌 Không có chi!", "Đừng khách sáo nè.", "🥰"]
+    },
+    "compliment": {
+        "keys": ["giỏi", "thông minh", "hay", "tốt", "good"],
+        "reply": ["Cảm ơn bạn quá khen! 😳", "Mình vẫn đang học hỏi thêm ạ.", "Bot mà lị! 😎"]
+    },
+    "insult": {
+        "keys": ["ngu", "dốt", "kém", "chán", "cút"],
+        "reply": ["Mình xin lỗi nếu làm bạn phật ý. 😿", "Mình sẽ cố gắng cải thiện hơn.", "Đừng mắng mình tội nghiệp..."]
+    },
+    "tired": {
+        "keys": ["mệt", "chán quá", "buồn ngủ"],
+        "reply": ["Mệt thì gõ 'Nghỉ' để thư giãn chút đi bạn.", "Cố lên nào! Học xong rồi nghỉ.", "Uống chút nước rồi học tiếp nhé! ☕"]
     }
-    
-    if not model: return backup
-    
-    try:
-        prompt = f"""
-        Nhiệm vụ: Tạo ví dụ cho từ tiếng Trung.
-        Từ khóa: "{hanzi}" (Nghĩa: {meaning}).
-        
-        Yêu cầu:
-        1. Đặt 1 câu tiếng Trung đơn giản (HSK 1-2).
-        2. Trả về đúng định dạng JSON bên dưới. KHÔNG giải thích gì thêm.
-        
-        JSON mẫu:
-        {{
-            "sentence_han": "câu chữ hán",
-            "sentence_pinyin": "phiên âm",
-            "sentence_viet": "dịch tiếng việt",
-            "new_words": []
-        }}
-        """
-        response = model.generate_content(prompt)
-        data = clean_json(response.text)
-        
-        # Kiểm tra xem JSON có đủ trường không, nếu thiếu thì dùng backup
-        if data and 'sentence_han' in data:
-            return data
-        return backup
-        
-    except Exception as e:
-        logger.error(f"⚠️ Lỗi tạo ví dụ: {e}")
-        return backup
+}
+
+DEFAULT_REPLIES = [
+    "Mình không hiểu lắm. Bạn gõ **Menu** để xem hướng dẫn nhé.",
+    "Câu này khó quá, mình chỉ biết dạy tiếng Trung thôi 😅",
+    "Gõ **'Bắt đầu'** để học từ vựng đi bạn ơi.",
+    "Mình là Bot học tập, không phải ChatGPT đâu nha 🤖"
+]
 
 def chat_reply(text):
-    if not model: return "Hệ thống AI đang bảo trì."
-    try:
-        res = model.generate_content(f"Bạn là trợ lý tiếng Trung. User: '{text}'. Trả lời ngắn gọn tiếng Việt.")
-        return res.text.strip()
-    except:
-        return "Máy chủ đang bận, thử lại sau nhé."
+    """Hàm trả lời tin nhắn dựa trên từ khóa"""
+    msg = text.lower().strip()
+    
+    # Duyệt qua các chủ đề để tìm từ khóa
+    for topic, data in CHAT_DATA.items():
+        if any(key in msg for key in data["keys"]):
+            return random.choice(data["reply"])
+    
+    # Nếu không khớp từ khóa nào -> Trả lời ngẫu nhiên mặc định
+    return random.choice(DEFAULT_REPLIES)
+
+def generate_sentence_with_annotation(word):
+    """
+    Vì bỏ AI nên hàm này chỉ trả về dữ liệu cơ bản.
+    Không tạo ví dụ giả để tránh sai ngữ pháp.
+    """
+    hanzi = word.get('Hán tự', '') or word.get('hanzi', '')
+    meaning = word.get('Nghĩa', '') or word.get('meaning', '')
+    
+    # Trả về cấu trúc rỗng nhưng an toàn
+    return {
+        "sentence_han": "", 
+        "sentence_pinyin": "", 
+        "sentence_viet": "", 
+        "new_words": []
+    }
