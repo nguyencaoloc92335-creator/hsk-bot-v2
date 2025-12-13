@@ -23,6 +23,7 @@ def init_and_sync_db():
     if not conn: return
     try:
         with conn.cursor() as cur:
+            # 1. Tạo bảng Users
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id VARCHAR(50) PRIMARY KEY, 
@@ -31,6 +32,7 @@ def init_and_sync_db():
                 );
             """)
             
+            # 2. Tạo bảng Words mới
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS words_new (
                     id SERIAL PRIMARY KEY, 
@@ -42,14 +44,33 @@ def init_and_sync_db():
                 );
             """)
             
+            # 3. Đồng bộ dữ liệu (FIX LỖI 'hanzi' TẠI ĐÂY)
             total_added = 0
-            for field_name, word_list in DATA_SOURCE.items():
+            
+            # Kiểm tra xem DATA_SOURCE là List (cũ) hay Dict (mới)
+            # Nếu user chưa kịp sửa hsk_data sang dạng chia trường, ta gom hết vào HSK_CHUNG
+            data_to_sync = {}
+            if isinstance(DATA_SOURCE, list):
+                data_to_sync = {"HSK_CHUNG": DATA_SOURCE}
+            else:
+                data_to_sync = DATA_SOURCE
+
+            for field_name, word_list in data_to_sync.items():
                 for w in word_list:
+                    # --- ĐOẠN CODE SỬA LỖI ---
+                    # Tự động tìm key dù là Tiếng Anh hay Tiếng Việt
+                    hanzi = w.get('hanzi') or w.get('Hán tự')
+                    pinyin = w.get('pinyin') or w.get('Pinyin')
+                    meaning = w.get('meaning') or w.get('Nghĩa')
+                    
+                    # Nếu thiếu từ Hán thì bỏ qua
+                    if not hanzi: continue
+                    
                     cur.execute("""
                         INSERT INTO words_new (hanzi, pinyin, meaning, field) 
                         VALUES (%s, %s, %s, %s) 
                         ON CONFLICT (hanzi, field) DO NOTHING
-                    """, (w['hanzi'], w['pinyin'], w['meaning'], field_name))
+                    """, (hanzi, pinyin, meaning, field_name))
                     if cur.rowcount > 0: total_added += 1
             
             logger.info(f"✅ Đã đồng bộ Database. Thêm mới: {total_added} từ.")
@@ -61,13 +82,26 @@ def init_and_sync_db():
 
 def get_user_state(uid, cache):
     if uid in cache: return cache[uid]
+    
+    # Lấy danh sách các trường hiện có trong DB để làm mặc định
+    all_fields = ["HSK1"] # Fallback
+    conn = get_conn()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT DISTINCT field FROM words_new")
+                rows = cur.fetchall()
+                if rows: all_fields = [r[0] for r in rows]
+        finally: release_conn(conn)
+
     s = {
         "user_id": uid, "mode": "IDLE", 
         "learned": [], "session": [], 
         "next_time": 0, "waiting": False, 
-        "fields": ["HSK1"], # Mặc định
+        "fields": all_fields,
         "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0}
     }
+    
     conn = get_conn()
     if conn:
         try:
@@ -117,9 +151,7 @@ def get_total_words_by_fields(target_fields):
             return cur.fetchone()[0]
     finally: release_conn(conn)
 
-# --- HÀM MỚI THÊM: Lấy thống kê tất cả các trường ---
 def get_all_fields_stats():
-    """Trả về danh sách: [('HSK1', 150), ('HSK2', 300)]"""
     conn = get_conn()
     if not conn: return []
     try:
