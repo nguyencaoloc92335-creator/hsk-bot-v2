@@ -7,6 +7,7 @@ CMD_RESET = ["reset", "học lại", "xóa"]
 CMD_PAUSE = ["nghỉ", "stop", "pause"]
 CMD_RESUME = ["tiếp", "tiếp tục", "học tiếp"]
 CMD_LIST = ["danh sách", "kho", "list", "thống kê"]
+CMD_MENU = ["menu", "help", "hướng dẫn", "hdsd", "lệnh"]
 
 def process_message(uid, text, cache):
     if common.is_sleep_mode():
@@ -16,25 +17,33 @@ def process_message(uid, text, cache):
     msg = text.lower().strip()
     state = database.get_user_state(uid, cache)
     
-    # --- CẬP NHẬT THỜI GIAN TƯƠNG TÁC ---
-    # Ghi lại thời điểm user vừa nhắn tin để tính giờ "treo máy"
     state["last_interaction"] = common.get_ts()
-    state["last_remind"] = 0 # Reset bộ đếm nhắc nhở
-    # Lưu tạm vào cache/DB ngay để chắc chắn main.py đọc được
+    state["last_remind"] = 0 
     database.save_user_state(uid, state, cache) 
-    # --------------------------------------
 
     mode = state.get("mode", "IDLE")
 
-    # 1. HƯỚNG DẪN
-    if msg in ["menu", "help", "hướng dẫn", "hdsd", "lệnh"]:
+    # 1. HƯỚNG DẪN + MENU (FEATURE 3 & 5)
+    if msg in CMD_MENU:
+        # Thống kê nhanh
+        learned_total = len(state.get("learned", []))
+        today_words = len(state.get("session", [])) # Tương đối
+        
+        stats_msg = (f"👋 Chào bạn!\n"
+                     f"🏆 Đã thuộc: **{learned_total}** từ.\n"
+                     f"🔥 Phiên nay: **{today_words}** từ.\n\n")
+        
         guide_content = guide.get_full_guide() 
-        fb_service.send_text(uid, guide_content)
+        
+        # Gửi kèm nút bấm
+        fb_service.send_text(uid, stats_msg + guide_content, buttons=["Bắt đầu", "Danh sách", "Tiếp tục"])
         return
 
     # 2. XỬ LÝ LỆNH CƠ BẢN
     if msg in CMD_RESUME:
         if mode == "PAUSED": pause.resume(uid, state, cache); return
+        if mode == "IDLE": fb_service.send_text(uid, "Gõ 'Bắt đầu' để học mới nha.", buttons=["Bắt đầu"]); return
+        
     if any(k in msg for k in CMD_PAUSE) and len(msg) < 20:
         pause.handle_pause(uid, text, state, cache); return
 
@@ -42,7 +51,7 @@ def process_message(uid, text, cache):
         stats = database.get_all_fields_stats()
         if not stats: fb_service.send_text(uid, "📭 Kho trống."); return
         reply = "📚 **KHO TỪ:**\n" + "\n".join([f"- {f}: {c}" for f,c in stats])
-        fb_service.send_text(uid, reply); return
+        fb_service.send_text(uid, reply, buttons=["Bắt đầu", "Menu"]); return
 
     if msg.startswith("chọn"):
         arg = msg.replace("chọn", "").strip().upper()
@@ -50,14 +59,14 @@ def process_message(uid, text, cache):
             stats = database.get_all_fields_stats()
             state["fields"] = [row[0] for row in stats]
             database.save_user_state(uid, state, cache)
-            fb_service.send_text(uid, "✅ Đã chọn TẤT CẢ. Tiến độ được giữ nguyên.")
+            fb_service.send_text(uid, "✅ Đã chọn TẤT CẢ. Tiến độ giữ nguyên.", buttons=["Tiếp tục"])
             return
 
         arg_list = arg.replace(",", " ").split()
         if arg_list: 
             state["fields"] = arg_list
             database.save_user_state(uid, state, cache)
-            fb_service.send_text(uid, f"✅ Đã chọn: {', '.join(arg_list)}. Tiến độ được giữ nguyên.")
+            fb_service.send_text(uid, f"✅ Đã chọn: {', '.join(arg_list)}. Tiến độ giữ nguyên.", buttons=["Tiếp tục"])
             return
 
     if msg in CMD_START:
@@ -76,21 +85,20 @@ def process_message(uid, text, cache):
             "last_goodnight": state.get("last_goodnight")
         }
         database.save_user_state(uid, s_new, cache)
-        fb_service.send_text(uid, "🔄 Đã Reset toàn bộ tiến độ học."); return
+        fb_service.send_text(uid, "🔄 Đã Reset toàn bộ tiến độ.", buttons=["Bắt đầu"]); return
 
-    # 3. XỬ LÝ TRẠNG THÁI HỌC
+    # 3. CÁC TRẠNG THÁI KHÁC
     if mode == "AUTO" and state.get("waiting"): learning.handle_auto_reply(uid, text, state, cache); return
     if mode == "REVIEWING": learning.handle_review_confirm(uid, text, state, cache); return
     
-    # 4. XỬ LÝ NGHỈ GIẢI LAO
     if mode in ["PRE_QUIZ", "SHORT_BREAK"]:
         rem = state.get("next_time",0) - common.get_ts()
         if rem > 0: 
-            fb_service.send_text(uid, f"⏳ Còn {int(rem/60)+1} phút nữa là học tiếp nha.")
+            fb_service.send_text(uid, f"⏳ Còn {int(rem/60)+1} phút nữa.", buttons=["Học ngay", "Menu"])
             return
         else:
             if mode == "SHORT_BREAK":
-                fb_service.send_text(uid, "🔔 **HẾT GIỜ NGHỈ!**\nHọc tiếp luôn nhé.")
+                fb_service.send_text(uid, "🔔 **HẾT GIỜ NGHỈ!** Học tiếp nào.")
                 state["mode"] = "AUTO"
                 state["waiting"] = False
                 database.save_user_state(uid, state, cache)
@@ -103,4 +111,4 @@ def process_message(uid, text, cache):
         
     if mode == "QUIZ": from logic import quiz; quiz.handle_answer(uid, text, state, cache); return
 
-    fb_service.send_text(uid, ai_service.chat_reply(text))
+    fb_service.send_text(uid, ai_service.chat_reply(text), buttons=["Menu"])
