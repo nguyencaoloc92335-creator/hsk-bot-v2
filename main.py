@@ -19,12 +19,9 @@ USER_CACHE = {}
 async def run_scan_logic():
     """Hàm này sẽ chạy mỗi 60 giây để kiểm tra giờ"""
     
-    # 1. Kiểm tra giờ ngủ (0h - 6h sáng thì không làm phiền, TRỪ việc chúc ngủ ngon lúc 23:59)
     now_dt = common.get_vn_time()
     current_hour = now_dt.hour
     current_minute = now_dt.minute
-    
-    # Nếu đang giờ ngủ (0-5h), bỏ qua logic học tập, chỉ giữ logic hệ thống nếu cần
     is_sleeping = 0 <= current_hour < 6
 
     conn = database.get_conn()
@@ -33,7 +30,7 @@ async def run_scan_logic():
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT state FROM users")
-            rows = cur.fetchall() # Lấy hết data ra trước để tránh lock DB lâu
+            rows = cur.fetchall()
             
             for row in rows:
                 if isinstance(row[0], str): s = json.loads(row[0])
@@ -45,43 +42,68 @@ async def run_scan_logic():
                 next_time = s.get("next_time", 0)
                 today = common.get_today_str()
 
-                # --- A. LOGIC HẸN GIỜ (CHỈ CHẠY KHI KHÔNG NGỦ) ---
+                # --- A. LOGIC HẸN GIỜ (KHI KHÔNG NGỦ) ---
                 if not is_sleeping:
-                    # 1. Hết giờ nghỉ giải lao ngắn (SHORT_BREAK) -> Học tiếp
+                    # 1. Short Break
                     if mode == "SHORT_BREAK":
                         if now_ts >= next_time:
-                            logger.info(f"User {uid}: End Short Break")
                             fb_service.send_text(uid, "🔔 **HẾT GIỜ GIẢI LAO!**\nQuay lại học tiếp nhé.")
-                            
                             s["mode"] = "AUTO"
                             s["waiting"] = False
                             USER_CACHE[uid] = s
                             database.save_user_state(uid, s, USER_CACHE)
-                            
-                            # Gửi từ mới ngay
                             learning.send_next_word(uid, s, USER_CACHE)
                             continue
 
-                    # 2. Hết giờ nghỉ chờ thi (PRE_QUIZ) -> Vào thi
+                    # 2. Pre Quiz
                     if mode == "PRE_QUIZ":
                         if now_ts >= next_time:
-                            logger.info(f"User {uid}: Start Quiz")
                             fb_service.send_text(uid, "🔔 **HẾT GIỜ GIẢI LAO!**\nBắt đầu bài kiểm tra 12 từ vừa học nhé.")
-                            
                             USER_CACHE[uid] = s
                             quiz.start_quiz_level(uid, s, USER_CACHE, 1)
                             continue
                     
-                    # 3. Chào buổi sáng (6:01)
+                    # 3. Chào buổi sáng (06:01)
                     if current_hour == 6 and current_minute == 1:
                         if s.get("last_greet") != today:
                             fb_service.send_text(uid, "☀️ **06:01 - CHÀO BUỔI SÁNG**\nChúc bạn ngày mới tốt lành! Gõ 'Bắt đầu' để học nhé.")
                             s["last_greet"] = today
                             database.save_user_state(uid, s, USER_CACHE)
 
+                    # ========================================================
+                    # 4. NHẮC NHỞ NGƯỜI DÙNG QUÊN TRẢ LỜI (IDLE REMINDER)
+                    # ========================================================
+                    # Chỉ nhắc khi Mode là: AUTO (đang chờ), QUIZ (đang thi), REVIEWING (đang xem list)
+                    target_modes = ["AUTO", "QUIZ", "REVIEWING"]
+                    
+                    # Kiểm tra kỹ hơn: AUTO thì phải đang waiting=True mới nhắc
+                    need_remind = False
+                    if mode in target_modes:
+                        if mode == "AUTO":
+                            if s.get("waiting", False): need_remind = True
+                        else:
+                            need_remind = True # QUIZ và REVIEWING luôn cần user phản hồi
+                    
+                    if need_remind:
+                        last_act = s.get("last_interaction", now_ts) # Lần cuối user nhắn
+                        last_rem = s.get("last_remind", 0)           # Lần cuối bot nhắc
+                        
+                        # Nếu đã im lặng hơn 10 phút (600s)
+                        if (now_ts - last_act) >= 600:
+                            # Và khoảng cách với lần nhắc trước cũng > 10 phút (để nhắc lại mỗi 10p)
+                            if (now_ts - last_rem) >= 600:
+                                if mode == "QUIZ":
+                                    fb_service.send_text(uid, "⏰ **Đang thi dở kìa!**\nBạn ơi quay lại làm nốt bài kiểm tra nha. Cố lên! 💪")
+                                else:
+                                    fb_service.send_text(uid, "⏰ **Đừng bỏ cuộc giữa chừng!**\nQuay lại học tiếp đi bạn ơi, đang đà phấn đấu! 🚀")
+                                
+                                # Cập nhật thời gian nhắc gần nhất
+                                s["last_remind"] = now_ts
+                                database.save_user_state(uid, s, USER_CACHE)
+
+
                 # --- B. LOGIC HỆ THỐNG (CHẠY KỂ CẢ KHI SẮP NGỦ) ---
-                
-                # 4. Chúc ngủ ngon (23:59)
+                # 5. Chúc ngủ ngon (23:59)
                 if current_hour == 23 and current_minute == 59:
                     if s.get("last_goodnight") != today:
                         fb_service.send_text(uid, "🌙 **23:59 RỒI**\nChúc bạn ngủ ngon và hẹn gặp lại sáng mai! 💤")
@@ -97,25 +119,22 @@ async def run_scan_logic():
 @app.on_event("startup")
 async def startup_event():
     database.init_and_sync_db()
-    # Khởi chạy vòng lặp background
     asyncio.create_task(background_timer())
 
 async def background_timer():
-    """Vòng lặp vĩnh cửu, chạy mỗi 60s"""
     logger.info("⏳ Timer Started: Scanning every 60s...")
     while True:
-        await asyncio.sleep(60) # Chờ 60 giây
-        await run_scan_logic()  # Chạy logic kiểm tra
+        await asyncio.sleep(60)
+        await run_scan_logic()
 
 # --- API ENDPOINTS ---
 
 @app.get("/")
 def home():
-    return PlainTextResponse("HSK Bot Running with Auto-Timer")
+    return PlainTextResponse("HSK Bot Running with Idle Reminder")
 
 @app.get("/trigger_scan")
 async def trigger_scan_manual():
-    """Endpoint để gọi thủ công nếu muốn test ngay"""
     await run_scan_logic()
     return PlainTextResponse("Manual Scan OK")
 
