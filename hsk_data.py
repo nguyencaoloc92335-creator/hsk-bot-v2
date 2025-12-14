@@ -93,7 +93,7 @@ DATA_SOURCE = {
         {"Hán tự": "工资", "Pinyin": "gōngzī", "Nghĩa": "lương tháng (ngang với nguyệt tân)"},
         {"Hán tự": "月薪", "Pinyin": "yuèxīn", "Nghĩa": "lương tháng"},
         {"Hán tự": "奖金", "Pinyin": "jiǎngjīn", "Nghĩa": "tiền thưởng"}
-    ]
+    ],
     "HSK2": [
         {"Hán tự": "吧", "Pinyin": "ba", "Nghĩa": "nhé, nhỉ (trợ từ)"},
         {"Hán tự": "白", "Pinyin": "bái", "Nghĩa": "trắng"},
@@ -244,6 +244,7 @@ DATA_SOURCE = {
         {"Hán tự": "左边", "Pinyin": "zuǒbian", "Nghĩa": "bên trái"}
     ]
 }
+
 
 
 
