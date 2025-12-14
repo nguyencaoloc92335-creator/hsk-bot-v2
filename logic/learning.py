@@ -10,15 +10,10 @@ def send_next_word(uid, state, cache):
     # Lấy fields người dùng chọn
     target_fields = state.get("fields", ["HSK1"])
     
-    # --- LOGIC MỚI: TÍNH TIẾN ĐỘ TỔNG ---
-    # 1. Lấy tổng số từ trong các kho đang chọn
+    # 1. TÍNH TIẾN ĐỘ TỔNG (Logic cũ vẫn giữ)
     total_words = database.get_total_words_by_fields(target_fields)
-    
-    # 2. Tính số từ đã học (trong kho learned) + đang học (trong session)
-    # Lưu ý: Cần trừ đi nếu có từ trùng lặp (tuy nhiên logic exclude đã xử lý, ở đây tính tương đối)
     learned_count = len(state.get("learned", [])) + len(state.get("session", []))
-    # ------------------------------------
-
+    
     # Lấy 1 từ mới từ DB (trừ những từ đã học trong session này)
     current_session_hanzi = [x['Hán tự'] for x in state['session']]
     exclude_list = state.get("learned", []) + current_session_hanzi
@@ -33,7 +28,7 @@ def send_next_word(uid, state, cache):
     state["session"].append(word)
     state["current_word"] = word['Hán tự']
     
-    # Tạo tin nhắn thẻ từ (CÓ THÊM DÒNG TIẾN ĐỘ)
+    # Tạo tin nhắn thẻ từ
     msg = (f"🔔 **TỪ MỚI** ({len(state['session'])}/12)\n"
            f"📈 **Tiến độ: {learned_count + 1}/{total_words}**\n"
            f"──────────────\n"
@@ -66,28 +61,28 @@ def handle_auto_reply(uid, text, state, cache):
         count = len(state["session"])
         
         # ========================================================
-        # LOGIC NGHỈ NGƠI & TỔNG HỢP (GIỮ NGUYÊN NHƯ CŨ)
+        # LOGIC NGHỈ NGƠI & TỔNG HỢP (ĐÃ CẬP NHẬT MỐC 12)
         # ========================================================
         
-        # 1. MỐC 12 TỪ: Tổng hợp + Nghỉ chờ Thi (PRE_QUIZ)
+        # 1. MỐC 12 TỪ: Tổng hợp TOÀN BỘ 12 TỪ + Nghỉ chờ Thi (PRE_QUIZ)
         if count >= 12:
             state["mode"] = "PRE_QUIZ"
             state["next_time"] = common.get_ts() + 540 # 9 phút
             
-            # Tổng hợp 6 từ cuối (7-12) CÓ PINYIN
-            review_words = state["session"][6:12]
+            # --- SỬA TẠI ĐÂY: Lấy toàn bộ session (0 đến hết) ---
+            review_words = state["session"] 
             review_msg = "\n".join([f"• {w['Hán tự']} ({w['Pinyin']}): {w['Nghĩa']}" for w in review_words])
             
-            fb_service.send_text(uid, f"🛑 **ĐỦ 12 TỪ**\nTổng hợp 6 từ cuối:\n{review_msg}\n\n☕ Nghỉ 9 phút rồi làm bài kiểm tra nhé!")
+            fb_service.send_text(uid, f"🛑 **HOÀN THÀNH 12 TỪ**\nDanh sách tổng hợp toàn bộ bài học:\n{review_msg}\n\n☕ Nghỉ 9 phút để não bộ ghi nhớ, sau đó sẽ làm bài kiểm tra nhé!")
             database.save_user_state(uid, state, cache)
             return
 
-        # 2. MỐC 6 TỪ: Tổng hợp đặc biệt + Nghỉ ngắn (SHORT_BREAK)
+        # 2. MỐC 6 TỪ: Tổng hợp 6 từ đầu (1-6) + Nghỉ ngắn (SHORT_BREAK)
         if count == 6:
             state["mode"] = "SHORT_BREAK"
             state["next_time"] = common.get_ts() + 540 # 9 phút
             
-            # Tổng hợp cả 6 từ đầu tiên (1-6) CÓ PINYIN
+            # Tổng hợp cả 6 từ đầu tiên (1-6)
             review_words = state["session"][0:6]
             review_msg = "\n".join([f"• {w['Hán tự']} ({w['Pinyin']}): {w['Nghĩa']}" for w in review_words])
             
@@ -95,12 +90,12 @@ def handle_auto_reply(uid, text, state, cache):
             database.save_user_state(uid, state, cache)
             return
 
-        # 3. CÁC MỐC CHẴN KHÁC (2, 4, 8, 10): Tổng hợp nhỏ + Nghỉ ngắn (SHORT_BREAK)
+        # 3. CÁC MỐC CHẴN KHÁC (2, 4, 8, 10): Tổng hợp 2 từ vừa học + Nghỉ ngắn
         if count % 2 == 0:
             state["mode"] = "SHORT_BREAK"
             state["next_time"] = common.get_ts() + 540 # 9 phút
             
-            # Nhắc lại 2 từ vừa học (CÓ PINYIN)
+            # Nhắc lại 2 từ vừa học
             words_2 = state["session"][-2:]
             review_msg = "\n".join([f"- {w['Hán tự']} ({w['Pinyin']}): {w['Nghĩa']}" for w in words_2])
             
