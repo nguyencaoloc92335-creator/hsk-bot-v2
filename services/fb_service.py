@@ -5,11 +5,27 @@ import time
 from gtts import gTTS
 from config import PAGE_ACCESS_TOKEN
 
-def send_text(uid, txt):
+def send_text(uid, txt, buttons=None):
+    """
+    buttons: List các nhãn nút. VD: ["Học tiếp", "Nghỉ ngơi"]
+    """
+    payload = {"recipient": {"id": uid}, "message": {"text": txt}}
+    
+    # Thêm Quick Replies (Nút bấm)
+    if buttons:
+        quick_replies = []
+        for btn_title in buttons:
+            quick_replies.append({
+                "content_type": "text",
+                "title": btn_title,
+                "payload": btn_title.upper().replace(" ", "_") # Payload ví dụ: HOC_TIEP
+            })
+        payload["message"]["quick_replies"] = quick_replies
+
     try:
         requests.post("https://graph.facebook.com/v16.0/me/messages", 
             params={"access_token": PAGE_ACCESS_TOKEN}, 
-            json={"recipient": {"id": uid}, "message": {"text": txt}}, timeout=10)
+            json=payload, timeout=10)
     except Exception as e: print(f"FB Error: {e}")
 
 def send_audio(uid, txt):
