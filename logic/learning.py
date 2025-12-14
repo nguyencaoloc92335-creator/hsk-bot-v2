@@ -7,28 +7,23 @@ import database
 def send_next_word(uid, state, cache):
     if common.is_sleep_mode(): return
     
-    # Lấy fields người dùng chọn
     target_fields = state.get("fields", ["HSK1"])
-    
-    # 1. TÍNH TIẾN ĐỘ TỔNG (Logic cũ vẫn giữ)
     total_words = database.get_total_words_by_fields(target_fields)
     learned_count = len(state.get("learned", [])) + len(state.get("session", []))
     
-    # Lấy 1 từ mới từ DB (trừ những từ đã học trong session này)
     current_session_hanzi = [x['Hán tự'] for x in state['session']]
     exclude_list = state.get("learned", []) + current_session_hanzi
     
     w = database.get_random_words_by_fields(exclude_list, target_fields, 1)
     
     if not w: 
-        fb_service.send_text(uid, f"🎉 Chúc mừng! Bạn đã học hết {learned_count}/{total_words} từ vựng trong kho này!")
+        fb_service.send_text(uid, f"🎉 Chúc mừng! Bạn đã học hết {learned_count}/{total_words} từ vựng trong kho này!", buttons=["Menu", "Reset"])
         return
     
     word = w[0]
     state["session"].append(word)
     state["current_word"] = word['Hán tự']
     
-    # Tạo tin nhắn thẻ từ
     msg = (f"🔔 **TỪ MỚI** ({len(state['session'])}/12)\n"
            f"📈 **Tiến độ: {learned_count + 1}/{total_words}**\n"
            f"──────────────\n"
@@ -38,9 +33,8 @@ def send_next_word(uid, state, cache):
            f"──────────────\n"
            f"👉 Gõ lại từ **{word['Hán tự']}** để học.")
     
+    # Không dùng nút bấm ở đây để bắt user gõ phím
     fb_service.send_text(uid, msg)
-    
-    # Gửi Audio
     threading.Thread(target=fb_service.send_audio, args=(uid, word['Hán tự'])).start()
     
     state["waiting"] = True
@@ -48,62 +42,53 @@ def send_next_word(uid, state, cache):
     database.save_user_state(uid, state, cache)
 
 def handle_auto_reply(uid, text, state, cache):
-    """Xử lý khi user gõ lại từ để học"""
     cur = state.get("current_word", "")
     msg = text.lower().strip()
     
-    # Chấp nhận gõ đúng từ hoặc lệnh xác nhận
-    if (cur in text) or (msg in ["hiểu", "ok", "tiếp", "next"]):
-        # Lưu từ vào danh sách đã học lâu dài
+    # SỬ DỤNG SO SÁNH THÔNG MINH (Feature 2)
+    is_match = common.check_answer_smart(msg, cur)
+    
+    if is_match or (msg in ["hiểu", "ok", "tiếp", "next"]):
         if cur not in state["learned"]:
             state["learned"].append(cur)
         
         count = len(state["session"])
         
-        # ========================================================
-        # LOGIC NGHỈ NGƠI & TỔNG HỢP (ĐÃ CẬP NHẬT MỐC 12)
-        # ========================================================
-        
-        # 1. MỐC 12 TỪ: Tổng hợp TOÀN BỘ 12 TỪ + Nghỉ chờ Thi (PRE_QUIZ)
+        # 1. MỐC 12 TỪ
         if count >= 12:
             state["mode"] = "PRE_QUIZ"
-            state["next_time"] = common.get_ts() + 540 # 9 phút
-            
-            # --- SỬA TẠI ĐÂY: Lấy toàn bộ session (0 đến hết) ---
-            review_words = state["session"] 
+            state["next_time"] = common.get_ts() + 540
+            review_words = state["session"]
             review_msg = "\n".join([f"• {w['Hán tự']} ({w['Pinyin']}): {w['Nghĩa']}" for w in review_words])
             
-            fb_service.send_text(uid, f"🛑 **HOÀN THÀNH 12 TỪ**\nDanh sách tổng hợp toàn bộ bài học:\n{review_msg}\n\n☕ Nghỉ 9 phút để não bộ ghi nhớ, sau đó sẽ làm bài kiểm tra nhé!")
+            fb_service.send_text(uid, f"🛑 **HOÀN THÀNH 12 TỪ**\nTổng hợp:\n{review_msg}\n\n☕ Nghỉ 9 phút nhé!", buttons=["Nghỉ ngay"])
             database.save_user_state(uid, state, cache)
             return
 
-        # 2. MỐC 6 TỪ: Tổng hợp 6 từ đầu (1-6) + Nghỉ ngắn (SHORT_BREAK)
+        # 2. MỐC 6 TỪ
         if count == 6:
             state["mode"] = "SHORT_BREAK"
-            state["next_time"] = common.get_ts() + 540 # 9 phút
-            
-            # Tổng hợp cả 6 từ đầu tiên (1-6)
+            state["next_time"] = common.get_ts() + 540
             review_words = state["session"][0:6]
             review_msg = "\n".join([f"• {w['Hán tự']} ({w['Pinyin']}): {w['Nghĩa']}" for w in review_words])
             
-            fb_service.send_text(uid, f"🌟 **CHẶNG 1 HOÀN THÀNH** (6/12)\nDanh sách ôn tập:\n{review_msg}\n\n⏳ Bot sẽ gọi bạn dậy học tiếp sau 9 phút nữa.")
+            fb_service.send_text(uid, f"🌟 **CHẶNG 1 (6/12)**\n{review_msg}\n\n⏳ Nghỉ 9 phút.", buttons=["Nghỉ ngay"])
             database.save_user_state(uid, state, cache)
             return
 
-        # 3. CÁC MỐC CHẴN KHÁC (2, 4, 8, 10): Tổng hợp 2 từ vừa học + Nghỉ ngắn
+        # 3. CÁC MỐC CHẴN KHÁC
         if count % 2 == 0:
             state["mode"] = "SHORT_BREAK"
-            state["next_time"] = common.get_ts() + 540 # 9 phút
-            
-            # Nhắc lại 2 từ vừa học
+            state["next_time"] = common.get_ts() + 540
             words_2 = state["session"][-2:]
             review_msg = "\n".join([f"- {w['Hán tự']} ({w['Pinyin']}): {w['Nghĩa']}" for w in words_2])
             
-            fb_service.send_text(uid, f"☕ **GIẢI LAO 9 PHÚT**\nĐã học xong 2 từ:\n{review_msg}\n\n⏳ Hết giờ Bot sẽ tự gọi bạn.")
+            fb_service.send_text(uid, f"☕ **GIẢI LAO 9 PHÚT**\n{review_msg}", buttons=["Nghỉ ngay"])
             database.save_user_state(uid, state, cache)
             return
             
-        # 4. CÁC MỐC LẺ (1, 3, 5...): Học tiếp ngay
+        # 4. CÁC MỐC LẺ
+        # Dùng Random lời khen từ resources? Thôi để đơn giản "Chính xác" ở đây, Quiz mới dùng random.
         fb_service.send_text(uid, "✅ Chính xác! Từ tiếp theo:")
         time.sleep(1)
         send_next_word(uid, state, cache)
