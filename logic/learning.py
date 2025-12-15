@@ -5,14 +5,15 @@ from logic import common, resources
 import database
 
 def send_next_word(uid, state, cache):
-    if common.is_sleep_mode(): return
+    # [ĐÃ SỬA] Xóa dòng kiểm tra is_sleep_mode() để tránh lỗi crash
+    # if common.is_sleep_mode(): return 
     
     # --- LOGIC MỚI: KIỂM TRA CHẾ ĐỘ HỌC CUSTOM ---
     custom_cfg = state.get("custom_learn", {"active": False})
     
     word_data = None
     
-    # 1. Nếu đang học Custom List
+    # 1. Nếu đang học Custom List (Kho tự tạo)
     if custom_cfg.get("active"):
         queue = custom_cfg.get("queue", [])
         if not queue:
@@ -29,9 +30,13 @@ def send_next_word(uid, state, cache):
         if w_list:
             word_data = w_list[0]
     
-    # 2. Nếu học bình thường (Random theo Field)
+    # 2. Nếu học bình thường (Random theo Field đã chọn)
     else:
         target_fields = state.get("fields", ["HSK1"])
+        
+        # Nếu target_fields rỗng (trường hợp lỗi), gán mặc định
+        if not target_fields: target_fields = ["HSK1"]
+
         exclude_list = state.get("learned", []) + [x['Hán tự'] for x in state.get('session', [])]
         w = database.get_random_words_by_fields(exclude_list, target_fields, 1)
         if w: word_data = w[0]
@@ -45,13 +50,15 @@ def send_next_word(uid, state, cache):
     state["current_word"] = word_data['Hán tự']
     state["repetition_count"] = 0 
     
-    # --- [SỬA LỖI HIỂN THỊ TIẾN ĐỘ] ---
+    # --- HIỂN THỊ TIẾN ĐỘ ---
     if custom_cfg.get("active"):
         # Với Custom List: Hiển thị số còn lại
         progress_str = f"Còn {len(custom_cfg['queue']) + 1} từ"
     else:
         # Với kho thường: Tính chính xác số đã học TRONG KHO NÀY
         target_fields = state.get("fields", ["HSK1"])
+        if not target_fields: target_fields = ["HSK1"]
+        
         total_words = database.get_total_words_by_fields(target_fields)
         
         # Đếm số từ đã học thuộc kho này
@@ -78,8 +85,6 @@ def send_next_word(uid, state, cache):
     database.save_user_state(uid, state, cache)
 
 def handle_auto_reply(uid, text, state, cache):
-    # GIỮ NGUYÊN CODE CŨ CỦA BẠN CHO HÀM NÀY
-    # (Tôi paste lại logic cũ để đảm bảo file hoàn chỉnh)
     cur = state.get("current_word", "")
     msg = text.lower().strip()
     
