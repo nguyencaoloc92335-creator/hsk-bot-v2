@@ -24,6 +24,10 @@ def send_next_word(uid, state, cache):
     state["session"].append(word)
     state["current_word"] = word['Hán tự']
     
+    # --- LOGIC MỚI: Đặt lại bộ đếm số lần nhắc lại ---
+    state["repetition_count"] = 0 
+    # ------------------------------------------------
+    
     msg = (f"🔔 **TỪ MỚI** ({len(state['session'])}/12)\n"
            f"📈 **Tiến độ: {learned_count + 1}/{total_words}**\n"
            f"──────────────\n"
@@ -31,9 +35,9 @@ def send_next_word(uid, state, cache):
            f"🇻🇳 {word['Nghĩa']}\n"
            f"🏷️ {word['Field']}\n"
            f"──────────────\n"
-           f"👉 Gõ lại từ **{word['Hán tự']}** để học.")
+           f"✍️ **YÊU CẦU:** Gõ lại từ **{word['Hán tự']}** 5 lần để nhớ mặt chữ!")
     
-    # Không dùng nút bấm ở đây để bắt user gõ phím
+    # Không dùng nút bấm để bắt buộc gõ
     fb_service.send_text(uid, msg)
     threading.Thread(target=fb_service.send_audio, args=(uid, word['Hán tự'])).start()
     
@@ -45,10 +49,26 @@ def handle_auto_reply(uid, text, state, cache):
     cur = state.get("current_word", "")
     msg = text.lower().strip()
     
-    # SỬ DỤNG SO SÁNH THÔNG MINH (Feature 2)
+    # Kiểm tra đáp án thông minh
     is_match = common.check_answer_smart(msg, cur)
     
-    if is_match or (msg in ["hiểu", "ok", "tiếp", "next"]):
+    # Lấy số lần đã gõ (mặc định là 0)
+    current_count = state.get("repetition_count", 0)
+
+    if is_match:
+        # Tăng số lần đã gõ đúng
+        current_count += 1
+        state["repetition_count"] = current_count
+        
+        # --- KIỂM TRA ĐÃ ĐỦ 5 LẦN CHƯA ---
+        if current_count < 5:
+            remain = 5 - current_count
+            fb_service.send_text(uid, f"✅ Chính xác! Hãy gõ lại **{remain}** lần nữa cho nhớ hẳn nhé.")
+            database.save_user_state(uid, state, cache)
+            return # Dừng hàm tại đây, không đi tiếp logic bên dưới
+        # ---------------------------------
+
+        # NẾU ĐÃ ĐỦ 5 LẦN -> Chạy tiếp logic cũ (Lưu từ, check mốc...)
         if cur not in state["learned"]:
             state["learned"].append(cur)
         
@@ -88,10 +108,14 @@ def handle_auto_reply(uid, text, state, cache):
             return
             
         # 4. CÁC MỐC LẺ
-        # Dùng Random lời khen từ resources? Thôi để đơn giản "Chính xác" ở đây, Quiz mới dùng random.
-        fb_service.send_text(uid, "✅ Chính xác! Từ tiếp theo:")
+        fb_service.send_text(uid, "💪 Tuyệt vời! Bạn đã thuộc từ này. Học từ tiếp theo nhé:")
         time.sleep(1)
         send_next_word(uid, state, cache)
         
     else:
-        fb_service.send_text(uid, f"⚠️ Gõ lại từ **{cur}** để nhớ mặt chữ nhé.")
+        # Nếu gõ sai hoặc gõ lệnh linh tinh khi đang học
+        # Cho phép lệnh "skip" hoặc "tiếp" nếu user thực sự muốn bỏ qua (tùy chọn)
+        if msg in ["tiếp", "next", "skip"]:
+             fb_service.send_text(uid, f"⚠️ Bạn cần gõ đủ 5 lần để nhớ. Đừng bỏ cuộc! Gõ lại **{cur}** nào.")
+        else:
+             fb_service.send_text(uid, f"⚠️ Chưa đúng. Hãy gõ lại từ **{cur}** nhé.")
