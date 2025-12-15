@@ -3,7 +3,7 @@ from psycopg2 import pool
 import json
 import logging
 from config import DATABASE_URL
-from hsk_data import DATA_SOURCE #
+from hsk_data import DATA_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def init_and_sync_db():
                 );
             """)
 
-            # 3. Tạo bảng Custom Lists
+            # 3. Tạo bảng Custom Lists (Kho từ người dùng)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS custom_lists (
                     id SERIAL PRIMARY KEY,
@@ -99,7 +99,7 @@ def get_user_state(uid, cache):
         "next_time": 0, "waiting": False, 
         "fields": all_fields,
         "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0},
-        "custom_learn": {"active": False, "queue": []}
+        "custom_learn": {"active": False, "queue": []} # Trạng thái học kho riêng
     }
     
     conn = get_conn()
@@ -162,7 +162,6 @@ def get_all_fields_stats():
             return cur.fetchall()
     finally: release_conn(conn)
 
-# --- [MỚI] HÀM ĐẾM TIẾN ĐỘ CHÍNH XÁC ---
 def get_count_learned_in_fields(learned_list, target_fields):
     """Đếm xem có bao nhiêu từ trong learned_list thuộc về target_fields"""
     if not learned_list or not target_fields: return 0
@@ -170,7 +169,6 @@ def get_count_learned_in_fields(learned_list, target_fields):
     if not conn: return 0
     try:
         with conn.cursor() as cur:
-            # Chỉ đếm những từ vừa có trong danh sách đã học, vừa thuộc kho đang chọn
             query = "SELECT COUNT(*) FROM words_new WHERE hanzi = ANY(%s) AND field = ANY(%s)"
             cur.execute(query, (learned_list, target_fields))
             return cur.fetchone()[0]
@@ -184,6 +182,16 @@ def get_all_words_by_field_raw(field_name):
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id, hanzi, meaning FROM words_new WHERE field = %s ORDER BY id", (field_name,))
+            return [{"id": r[0], "hanzi": r[1], "meaning": r[2]} for r in cur.fetchall()]
+    finally: release_conn(conn)
+
+def get_all_words_raw():
+    """Lấy toàn bộ từ trong DB (không phân biệt field) để duyệt"""
+    conn = get_conn()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, hanzi, meaning FROM words_new ORDER BY id")
             return [{"id": r[0], "hanzi": r[1], "meaning": r[2]} for r in cur.fetchall()]
     finally: release_conn(conn)
 
