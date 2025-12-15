@@ -32,7 +32,9 @@ def send_audio(uid, txt):
     if not txt: return
     fname = f"tts_{uid}_{int(time.time())}.mp3"
     try:
-        gTTS(text=txt, lang='zh-cn').save(fname)
+        # --- SỬA LỖI TẠI ĐÂY: Đổi 'zh-cn' thành 'zh-CN' ---
+        gTTS(text=txt, lang='zh-CN').save(fname)
+        
         requests.post(f"https://graph.facebook.com/v16.0/me/messages?access_token={PAGE_ACCESS_TOKEN}", 
             data={'recipient': json.dumps({'id': uid}), 'message': json.dumps({'attachment': {'type': 'audio', 'payload': {}}})}, 
             files={'filedata': (fname, open(fname, 'rb'), 'audio/mp3')}, timeout=20)
