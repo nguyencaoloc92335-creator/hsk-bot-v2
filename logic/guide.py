@@ -1,41 +1,44 @@
 def get_full_guide():
     """
     Hàm trả về nội dung hướng dẫn chi tiết.
-    Cập nhật nội dung tại đây mỗi khi có tính năng mới.
+    Cập nhật nội dung phù hợp với tính năng Tạo kho và logic học mới.
     """
     return (
-        "📘 **CẨM NANG HƯỚNG DẪN SỬ DỤNG BOT** 📘\n"
+        "📘 **HƯỚNG DẪN SỬ DỤNG TRỢ LÝ HỌC TẬP** 📘\n"
         "────────────────────────\n\n"
         
-        "1️⃣ **QUẢN LÝ KHO TỪ VỰNG**\n"
-        "• Gõ `Danh sách`: Xem thống kê các kho từ (HSK1, HSK2...).\n"
-        "• Gõ `Chọn [Tên]`: Để chọn kho học cụ thể.\n"
-        "   👉 VD: `Chọn HSK1` hoặc `Chọn HSK1 HSK2`.\n"
-        "• Gõ `Chọn Tất cả`: Để học trộn lẫn toàn bộ kho.\n\n"
+        "🛠️ **1. TÙY CHỈNH KHO TỪ (TÍNH NĂNG MỚI)**\n"
+        "Bạn có thể tự tạo lộ trình học riêng bằng cách lọc từ vựng:\n"
+        "• Bước 1: Gõ lệnh `Tạo kho`.\n"
+        "• Bước 2: Chọn nguồn từ vựng muốn duyệt (VD: HSK1, Chuyên_ngành...).\n"
+        "• Bước 3: Bot sẽ hiện từng từ. Bấm **[Học]** để chọn hoặc **[Bỏ qua]**.\n"
+        "• Bước 4: Sau khi chọn xong, đặt tên cho kho và chọn **Lưu vĩnh viễn** hoặc **Học ngay**.\n\n"
+
+        "📚 **2. CHỌN KHO CÓ SẴN**\n"
+        "• Gõ `Danh sách`: Xem thống kê các kho từ hiện có.\n"
+        "• Gõ `Chọn [Tên]`: Để học trọn bộ kho đó.\n"
+        "   👉 VD: `Chọn HSK1` hoặc `Chọn Chuyên_ngành`.\n"
+        "• Gõ `Chọn Tất cả`: Để học trộn lẫn toàn bộ dữ liệu.\n\n"
         
-        "2️⃣ **QUY TRÌNH HỌC TẬP (CƠ CHẾ MỚI)**\n"
-        "Bot sẽ dạy theo **nhóm 12 từ** để tối ưu trí nhớ:\n"
-        "🔹 **Giai đoạn 1**: Bot gửi lần lượt từng từ. Bạn gõ lại từ đó (hoặc gõ `OK`) để xác nhận.\n"
-        "🔹 **Giai đoạn 2**: Khi đủ **6 từ**, Bot gửi danh sách ôn tập. Gõ `OK` để học tiếp.\n"
-        "🔹 **Giai đoạn 3**: Khi đủ **12 từ**, Bot gửi danh sách ôn tập lần 2.\n"
-        "🔹 **Giai đoạn 4**: **NGHỈ GIẢI LAO**. Sau khi xác nhận xong 12 từ, Bot sẽ yêu cầu bạn nghỉ **9 phút** để não bộ ghi nhớ.\n"
-        "🔹 **Giai đoạn 5**: Hết 9 phút, Bot sẽ gọi bạn dậy để làm bài **Kiểm tra (Quiz)**.\n\n"
+        "🧠 **3. PHƯƠNG PHÁP HỌC TẬP**\n"
+        "Bot áp dụng kỹ thuật **Lặp lại ngắt quãng** để tối ưu trí nhớ:\n"
+        "🔹 **Học từ mới**: Mỗi phiên gồm **12 từ**. Bạn cần gõ lại đúng mỗi từ **5 lần** để ghi nhớ mặt chữ.\n"
+        "🔹 **Giải lao**: Bot sẽ nhắc bạn nghỉ giải lao ngắn sau mỗi 6 từ và nghỉ **9 phút** sau khi xong 12 từ. Hãy tuân thủ để não bộ nạp kiến thức.\n"
+        "🔹 **Ôn tập**: Sau giờ nghỉ, Bot sẽ gọi bạn dậy để Kiểm tra.\n\n"
         
-        "3️⃣ **HỆ THỐNG KIỂM TRA (QUIZ)**\n"
-        "• Bài kiểm tra xuất hiện sau khi nghỉ giải lao.\n"
-        "• Bạn phải vượt qua 3 cấp độ:\n"
-        "   - Cấp 1: Nhìn chữ Hán -> Đoán nghĩa.\n"
-        "   - Cấp 2: Nhìn Nghĩa -> Viết chữ Hán.\n"
-        "   - Cấp 3: Nghe Audio -> Viết chữ Hán.\n"
-        "• Nếu sai câu nào, Bot sẽ bắt làm lại đến khi thuộc mới thôi!\n\n"
+        "✍️ **4. HỆ THỐNG KIỂM TRA (QUIZ)**\n"
+        "Để hoàn thành bài học, bạn cần vượt qua 3 cấp độ:\n"
+        "   1️⃣ Nhìn chữ Hán -> Đoán nghĩa.\n"
+        "   2️⃣ Nhìn Nghĩa -> Viết chữ Hán.\n"
+        "   3️⃣ Nghe Audio -> Viết nghĩa Tiếng Việt.\n"
+        "⚠️ Nếu sai, từ đó sẽ được đánh dấu để ôn kỹ lại sau.\n\n"
         
-        "4️⃣ **CÁC LỆNH TIỆN ÍCH**\n"
-        "⏸️ **Tạm dừng**: Gõ `Nghỉ`, `Stop`, `Bận`.\n"
-        "   👉 Bot sẽ dừng gửi tin nhắn. (Có thể gõ `Nghỉ 30p` để hẹn giờ).\n"
-        "▶️ **Tiếp tục**: Gõ `Tiếp`, `Resume` để học lại.\n"
-        "🔄 **Làm mới**: Gõ `Reset` để xóa toàn bộ tiến độ và học lại từ con số 0.\n\n"
+        "⚙️ **5. CÁC LỆNH TIỆN ÍCH**\n"
+        "⏸️ **Tạm dừng**: Gõ `Nghỉ` (hoặc `Nghỉ 30p` để hẹn giờ).\n"
+        "▶️ **Tiếp tục**: Gõ `Tiếp` để quay lại bài học.\n"
+        "🔄 **Làm mới**: Gõ `Reset` để xóa toàn bộ tiến độ về 0.\n\n"
         
         "────────────────────────\n"
-        "💡 **Mẹo:** Hãy bật âm thanh để nghe phát âm chuẩn nhé!\n"
-        "👉 Gõ **'Bắt đầu'** để vào bài học ngay!"
+        "💡 **Mẹo:** Hãy bật âm thanh để nghe phát âm chuẩn.\n"
+        "👉 Gõ **'Bắt đầu'** hoặc **'Tạo kho'** để vào việc ngay!"
     )
