@@ -2,9 +2,8 @@ from logic import common, learning, quiz, pause, selection, menu, system
 from services import ai_service, fb_service
 import database
 
-# ĐỊNH NGHĨA DANH SÁCH LỆNH
 CMD_START = ["bắt đầu", "start", "học"]
-CMD_RESUME = ["tiếp", "tiếp tục", "học tiếp"]
+CMD_RESUME = ["tiếp", "tiếp tục", "học tiếp", "hủy"]
 CMD_PAUSE = ["nghỉ", "stop", "pause", "bận"]
 CMD_RESET = ["reset", "học lại", "xóa"]
 CMD_MENU = ["menu", "help", "hướng dẫn", "hdsd", "lệnh"]
@@ -12,8 +11,6 @@ CMD_LIST = ["danh sách", "kho", "list", "thống kê"]
 CMD_CREATE_LIST = ["tạo kho", "lọc từ", "chọn từ"]
 
 def process_message(uid, text, cache):
-    # [ĐÃ XÓA] Logic kiểm tra giờ ngủ (is_sleep_mode) -> Bot chạy 24/7
-
     msg = text.lower().strip()
     state = database.get_user_state(uid, cache)
     
@@ -26,7 +23,11 @@ def process_message(uid, text, cache):
     # PHẦN 1: ƯU TIÊN ĐIỀU HƯỚNG THEO TRẠNG THÁI
     # ======================================================
     
-    # 1. Nếu đang chọn kho (Selection)
+    # 1. Đang tương tác với Menu Nghỉ hoặc Đang chờ nhập thời gian nghỉ
+    if mode.startswith("PAUSE_"): 
+        pause.handle_pause_input(uid, text, state, cache); return
+
+    # 2. Đang chọn kho (Selection)
     if mode.startswith("SELECT_"):
         if mode == selection.STATE_ASK_SOURCE:
             selection.handle_source_selection(uid, text, state, cache); return
@@ -37,11 +38,6 @@ def process_message(uid, text, cache):
         if mode == selection.STATE_CONFIRM_SAVE:
             selection.handle_save_confirmation(uid, text, state, cache); return
 
-    # 2. Nếu đang trong Menu Nghỉ -> Chuyển hướng sang handle_pause_selection
-    # (Để xử lý các nút bấm "Nghỉ 30p", "Không làm phiền")
-    if any(k in msg for k in ["nghỉ 30p", "không làm phiền"]):
-        pause.handle_pause_selection(uid, text, state, cache); return
-
     # 3. Đang Học
     if mode == "AUTO" and state.get("waiting"): 
         learning.handle_auto_reply(uid, text, state, cache); return
@@ -51,7 +47,7 @@ def process_message(uid, text, cache):
         quiz.handle_answer(uid, text, state, cache); return
 
     # ======================================================
-    # PHẦN 2: XỬ LÝ LỆNH ĐIỀU KHIỂN
+    # PHẦN 2: XỬ LÝ LỆNH
     # ======================================================
 
     if msg in CMD_MENU:
@@ -73,11 +69,10 @@ def process_message(uid, text, cache):
         state["mode"] = "AUTO"; state["session"] = []
         learning.send_next_word(uid, state, cache); return
 
-    # Lệnh Tiếp tục -> Gọi hàm resume trong pause.py
     if msg in CMD_RESUME:
         pause.resume(uid, state, cache); return
 
-    # Lệnh Nghỉ -> Hiện Menu chọn chế độ
+    # Lệnh "Nghỉ" -> Hiện Menu
     if any(k in msg for k in CMD_PAUSE) and len(msg) < 20:
         pause.show_pause_menu(uid, state, cache); return
 
