@@ -32,38 +32,37 @@ def init_and_sync_db():
                 );
             """)
             
-            # 2. Tạo bảng Words mới
+            # 2. Tạo bảng Words
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS words_new (
                     id SERIAL PRIMARY KEY, 
                     hanzi VARCHAR(50) NOT NULL, 
                     pinyin VARCHAR(100), 
                     meaning TEXT, 
-                    field VARCHAR(20) NOT NULL,
+                    field VARCHAR(50) NOT NULL,
                     UNIQUE(hanzi, field)
                 );
             """)
-            
-            # 3. Đồng bộ dữ liệu (FIX LỖI 'hanzi' TẠI ĐÂY)
-            total_added = 0
-            
-            # Kiểm tra xem DATA_SOURCE là List (cũ) hay Dict (mới)
-            # Nếu user chưa kịp sửa hsk_data sang dạng chia trường, ta gom hết vào HSK_CHUNG
-            data_to_sync = {}
-            if isinstance(DATA_SOURCE, list):
-                data_to_sync = {"HSK_CHUNG": DATA_SOURCE}
-            else:
-                data_to_sync = DATA_SOURCE
 
+            # 3. [MỚI] Tạo bảng Custom Lists (Kho từ người dùng)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS custom_lists (
+                    id SERIAL PRIMARY KEY,
+                    user_id VARCHAR(50) NOT NULL,
+                    list_name VARCHAR(100),
+                    word_ids JSONB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            
+            # Đồng bộ dữ liệu
+            data_to_sync = DATA_SOURCE if isinstance(DATA_SOURCE, dict) else {"HSK_CHUNG": DATA_SOURCE}
+            total_added = 0
             for field_name, word_list in data_to_sync.items():
                 for w in word_list:
-                    # --- ĐOẠN CODE SỬA LỖI ---
-                    # Tự động tìm key dù là Tiếng Anh hay Tiếng Việt
                     hanzi = w.get('hanzi') or w.get('Hán tự')
                     pinyin = w.get('pinyin') or w.get('Pinyin')
                     meaning = w.get('meaning') or w.get('Nghĩa')
-                    
-                    # Nếu thiếu từ Hán thì bỏ qua
                     if not hanzi: continue
                     
                     cur.execute("""
@@ -73,18 +72,19 @@ def init_and_sync_db():
                     """, (hanzi, pinyin, meaning, field_name))
                     if cur.rowcount > 0: total_added += 1
             
-            logger.info(f"✅ Đã đồng bộ Database. Thêm mới: {total_added} từ.")
+            logger.info(f"✅ DB Synced. Added: {total_added} words.")
         conn.commit()
     except Exception as e:
         logger.error(f"❌ Init DB Failed: {e}")
         conn.rollback()
     finally: release_conn(conn)
 
+# --- USER STATE ---
 def get_user_state(uid, cache):
     if uid in cache: return cache[uid]
     
-    # Lấy danh sách các trường hiện có trong DB để làm mặc định
-    all_fields = ["HSK1"] # Fallback
+    # Lấy danh sách field mặc định
+    all_fields = ["HSK1"]
     conn = get_conn()
     if conn:
         try:
@@ -99,7 +99,8 @@ def get_user_state(uid, cache):
         "learned": [], "session": [], 
         "next_time": 0, "waiting": False, 
         "fields": all_fields,
-        "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0}
+        "quiz": {"level": 1, "queue": [], "failed": [], "idx": 0},
+        "custom_learn": {"active": False, "queue": []} # [MỚI] Trạng thái học kho riêng
     }
     
     conn = get_conn()
@@ -125,13 +126,15 @@ def save_user_state(uid, s, cache):
             conn.commit()
         finally: release_conn(conn)
 
+# --- WORD QUERIES ---
+
 def get_random_words_by_fields(exclude_list, target_fields, count=1):
     conn = get_conn()
     if not conn: return []
     try:
         with conn.cursor() as cur:
             query = """
-                SELECT hanzi, pinyin, meaning, field 
+                SELECT hanzi, pinyin, meaning, field, id
                 FROM words_new 
                 WHERE field = ANY(%s) 
                 AND hanzi NOT IN %s 
@@ -139,7 +142,7 @@ def get_random_words_by_fields(exclude_list, target_fields, count=1):
             """
             exclude_tuple = tuple(exclude_list) if exclude_list else ('',)
             cur.execute(query, (target_fields, exclude_tuple, count))
-            return [{"Hán tự": r[0], "Pinyin": r[1], "Nghĩa": r[2], "Field": r[3]} for r in cur.fetchall()]
+            return [{"Hán tự": r[0], "Pinyin": r[1], "Nghĩa": r[2], "Field": r[3], "id": r[4]} for r in cur.fetchall()]
     finally: release_conn(conn)
 
 def get_total_words_by_fields(target_fields):
@@ -158,4 +161,42 @@ def get_all_fields_stats():
         with conn.cursor() as cur:
             cur.execute("SELECT field, COUNT(*) FROM words_new GROUP BY field ORDER BY field")
             return cur.fetchall()
+    finally: release_conn(conn)
+
+# --- [MỚI] CUSTOM LIST QUERIES ---
+
+def get_all_words_by_field_raw(field_name):
+    """Lấy toàn bộ từ của 1 field để duyệt"""
+    conn = get_conn()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, hanzi, meaning FROM words_new WHERE field = %s ORDER BY id", (field_name,))
+            # Trả về list dict để dễ xử lý
+            return [{"id": r[0], "hanzi": r[1], "meaning": r[2]} for r in cur.fetchall()]
+    finally: release_conn(conn)
+
+def get_words_by_ids(id_list):
+    """Lấy chi tiết từ theo danh sách ID"""
+    if not id_list: return []
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            # Dùng ANY để query mảng ID
+            cur.execute("SELECT hanzi, pinyin, meaning, field, id FROM words_new WHERE id = ANY(%s)", (id_list,))
+            return [{"Hán tự": r[0], "Pinyin": r[1], "Nghĩa": r[2], "Field": r[3], "id": r[4]} for r in cur.fetchall()]
+    finally: release_conn(conn)
+
+def create_custom_list(uid, name, word_ids):
+    conn = get_conn()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO custom_lists (user_id, list_name, word_ids) VALUES (%s, %s, %s)", 
+                        (uid, name, json.dumps(word_ids)))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Create List Error: {e}")
+        return False
     finally: release_conn(conn)
