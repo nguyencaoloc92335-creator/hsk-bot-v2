@@ -3,75 +3,64 @@ import database
 from logic import common
 
 def handle_show_stats(uid, state, cache):
-    """Xử lý lệnh 'Danh sách' - Hiển thị các kho từ vựng"""
-    # 1. Lấy thống kê các kho HSK/Chuyên ngành
+    """Xử lý lệnh 'Danh sách'"""
     stats = database.get_all_fields_stats()
-    
-    # 2. (Tùy chọn) Có thể lấy thêm danh sách kho tự tạo (Custom List) nếu muốn
-    # custom_lists = database.get_custom_lists_of_user(uid) ... (Chưa làm hàm này, để sau)
 
     if not stats: 
         fb_service.send_text(uid, "📭 Kho từ vựng đang trống.")
         return
 
-    # Format nội dung
     msg_lines = ["📚 **THỐNG KÊ KHO TỪ VỰNG:**"]
     for field, count in stats:
-        # Làm đẹp tên: Chuyên_ngành -> Chuyên ngành
         display_name = field.replace("_", " ")
         msg_lines.append(f"• **{display_name}**: {count} từ")
     
     msg_lines.append("\n👉 Gõ `Chọn [Tên]` để học (VD: Chọn HSK1).")
+    msg_lines.append("👉 Gõ `Chọn Tất cả` để học gộp toàn bộ.")
     
-    # Gợi ý nút bấm dựa trên danh sách có sẵn
-    buttons = [s[0].replace("_", " ") for s in stats][:3] # Lấy 3 cái đầu
+    # Gợi ý nút bấm
+    buttons = ["Chọn Tất cả"] + [s[0].replace("_", " ") for s in stats][:2]
     
     fb_service.send_text(uid, "\n".join(msg_lines), buttons=buttons)
 
 def handle_select_source(uid, text, state, cache):
-    """Xử lý lệnh 'Chọn ...' (VD: Chọn HSK1, Chọn Chuyên ngành)"""
+    """Xử lý lệnh 'Chọn ...'"""
+    # 1. Chuẩn hóa text đầu vào
     arg = text.lower().replace("chọn", "").strip()
-    
-    # Lấy danh sách field thực tế trong DB
-    stats = database.get_all_fields_stats()
-    # Map để chuẩn hóa: "chuyên ngành" -> "Chuyên_ngành"
-    # Key là tên viết thường không dấu cách/gạch, Value là tên chuẩn trong DB
-    real_fields = {s[0].lower().replace("_", " ").replace(" ", ""): s[0] for s in stats}
-    
-    # Xử lý input người dùng
     raw_input = arg.replace("_", " ").replace(" ", "")
+    
+    # 2. Lấy dữ liệu thực tế từ DB
+    stats = database.get_all_fields_stats()
+    real_fields = {s[0].lower().replace("_", " ").replace(" ", ""): s[0] for s in stats}
     
     reply = ""
     target_fields = []
 
-    # 1. Trường hợp chọn TẤT CẢ
-    if raw_input in ["tấtcả", "all", "tatca"]:
-        target_fields = [s[0] for s in stats]
+    # --- LOGIC CHỌN TẤT CẢ (ĐƯỢC ƯU TIÊN) ---
+    if raw_input in ["tấtcả", "all", "tatca", "tat ca"]:
+        target_fields = [s[0] for s in stats] # Lấy danh sách toàn bộ field
         reply = "✅ Đã chọn **TẤT CẢ** các kho."
     
-    # 2. Trường hợp chọn 1 kho cụ thể (Match thông minh)
+    # --- LOGIC CHỌN KHO CỤ THỂ ---
     elif raw_input in real_fields:
         correct_field = real_fields[raw_input]
         target_fields = [correct_field]
         reply = f"✅ Đã chọn kho: **{correct_field}**."
         
-    # 3. Trường hợp fallback (Chọn nhiều kho gõ tay: HSK1 HSK2)
+    # --- LOGIC FALLBACK (Chọn nhiều kho gõ tay) ---
     else:
-        # Cố gắng tách chuỗi cũ
+        # Cố gắng tách chuỗi cũ (VD: HSK1 HSK2)
         parts = text.replace("chọn", "").upper().replace(",", " ").split()
-        target_fields = parts # Cách này kém chính xác hơn nhưng giữ tương thích cũ
-        reply = f"✅ Đã chọn: {', '.join(parts)}."
+        if parts:
+            target_fields = parts 
+            reply = f"✅ Đã chọn: {', '.join(parts)}."
+        else:
+            fb_service.send_text(uid, "⚠️ Tên kho không hợp lệ. Gõ 'Danh sách' để xem lại nhé.")
+            return
 
-    # CẬP NHẬT STATE
+    # 3. Cập nhật State
     state["fields"] = target_fields
-    
-    # Quan trọng: Tắt chế độ học Custom (nếu đang bật) để quay về học kho thường
-    state["custom_learn"]["active"] = False
-    
-    # Reset phiên học hiện tại để nạp từ mới từ kho mới
-    # (Tùy chọn: Nếu muốn giữ 12 từ đang học dở thì bỏ dòng này)
-    # state["session"] = [] 
+    state["custom_learn"]["active"] = False # Quan trọng: Tắt chế độ Custom Learn
     
     database.save_user_state(uid, state, cache)
-    
-    fb_service.send_text(uid, f"{reply}\nTiến độ học được tính riêng cho kho này.", buttons=["Bắt đầu", "Menu"])
+    fb_service.send_text(uid, f"{reply}\nTiến độ học được tính riêng cho lựa chọn này.", buttons=["Bắt đầu", "Menu"])
