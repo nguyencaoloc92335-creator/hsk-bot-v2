@@ -1,82 +1,139 @@
+import re
 import time
 from services import fb_service
 import database
 from logic import common
 
-# Các hằng số định danh loại nghỉ
-PAUSE_TYPE_FIXED = "FIXED"         # Nghỉ có hẹn giờ (30p)
-PAUSE_TYPE_DND = "DND"             # Không làm phiền (Im lặng tuyệt đối)
+# Định nghĩa các loại nghỉ
+TYPE_INDEFINITE = "INDEFINITE" # Không thời hạn
+TYPE_FIXED = "FIXED"           # Có thời hạn
+TYPE_DND = "DND"               # Không làm phiền
 
 def show_pause_menu(uid, state, cache):
-    """Hiển thị 3 nút chọn chế độ nghỉ"""
+    """Hiển thị Menu 3 chế độ nghỉ"""
     msg = (
-        "😴 **CHẾ ĐỘ NGHỈ NGƠI**\n"
-        "Bạn muốn nghỉ theo cách nào?\n\n"
-        "1️⃣ **Nghỉ 30 phút**: Mình sẽ canh giờ và gọi bạn dậy.\n"
-        "2️⃣ **Không làm phiền**: Mình sẽ im lặng cho đến khi bạn gọi.\n"
-        "3️⃣ **Học tiếp**: Quay lại bài học ngay."
+        "😴 **CHỌN CHẾ ĐỘ NGHỈ**\n\n"
+        "1️⃣ **Nghỉ tự do**: Mình sẽ nhắc bạn quay lại mỗi 30 phút.\n"
+        "2️⃣ **Nghỉ giải lao**: Bạn đặt giờ (VD: 20p). Mình sẽ nhắc lúc giữa giờ (10p) và khi hết giờ.\n"
+        "3️⃣ **Không làm phiền**: Im lặng tuyệt đối trong thời gian bạn chọn.\n\n"
+        "👇 Chọn bên dưới hoặc gõ `Hủy` để học tiếp."
     )
-    # 3 Nút chức năng
-    buttons = ["Nghỉ 30p", "Không làm phiền", "Học tiếp"]
+    buttons = ["Nghỉ tự do", "Nghỉ giải lao", "Không làm phiền"]
     
-    # Không đổi mode ngay, chỉ gửi menu để user chọn
+    # Đặt trạng thái để router biết đang ở menu nghỉ
+    state["mode"] = "PAUSE_MENU" 
+    database.save_user_state(uid, state, cache)
     fb_service.send_text(uid, msg, buttons=buttons)
 
-def handle_pause_selection(uid, text, state, cache):
-    """Xử lý sự kiện khi người dùng bấm nút trong menu nghỉ"""
+def handle_pause_input(uid, text, state, cache):
+    """
+    Xử lý đầu vào khi user đang ở trong Menu Nghỉ hoặc 
+    đang được yêu cầu nhập thời gian.
+    """
     msg = text.lower().strip()
     
-    # 1. XỬ LÝ NGHỈ 30 PHÚT
-    if "30" in msg or "ngắn" in msg:
-        duration = 1800 # 30 phút = 1800s
-        state["mode"] = "PAUSED"
-        state["pause_info"] = {
-            "type": PAUSE_TYPE_FIXED,
-            "start_at": common.get_ts(),
-            "end_at": common.get_ts() + duration,
-            "last_remind": common.get_ts()
-        }
-        database.save_user_state(uid, state, cache)
-        fb_service.send_text(uid, "👌 Ok, nghỉ 30 phút nhé. 30p nữa mình gọi!", buttons=["Học tiếp"])
-        return
-
-    # 2. XỬ LÝ KHÔNG LÀM PHIỀN (DND)
-    if "không làm phiền" in msg or "dnd" in msg or "im lặng" in msg:
-        state["mode"] = "PAUSED"
-        state["pause_info"] = {
-            "type": PAUSE_TYPE_DND,
-            "start_at": common.get_ts(),
-            "end_at": 0, # Không có thời gian kết thúc
-            "last_remind": common.get_ts()
-        }
-        database.save_user_state(uid, state, cache)
-        fb_service.send_text(uid, "🤫 Ok, chế độ **Không làm phiền** đã bật.\nKhi nào rảnh, hãy gõ **'Tiếp'** để học lại nhé.", buttons=["Học tiếp"])
-        return
-
-    # 3. XỬ LÝ HỌC TIẾP (Resume)
-    if msg in ["học tiếp", "tiếp", "resume", "hủy"]:
+    # 1. Xử lý lệnh Hủy / Tiếp tục
+    if msg in ["hủy", "tiếp", "học tiếp", "cancel", "resume"]:
         resume(uid, state, cache)
         return
 
-    # Nếu không khớp nút nào -> Hiện lại menu
-    show_pause_menu(uid, state, cache)
-
-def resume(uid, state, cache):
-    """Hàm quay lại học (Dùng chung cho cả Router và Main)"""
-    # Nếu đang IDLE thì chỉ báo bắt đầu
-    if state.get("mode") == "IDLE":
-        fb_service.send_text(uid, "👋 Bạn đang rảnh mà. Gõ 'Bắt đầu' để học nhé.", buttons=["Bắt đầu"])
+    # 2. Xử lý các nút bấm Menu
+    if "tự do" in msg or "không thời hạn" in msg:
+        start_indefinite_pause(uid, state, cache)
         return
 
-    # Khôi phục trạng thái
+    if "giải lao" in msg or "có thời hạn" in msg:
+        # Chuyển sang trạng thái chờ nhập thời gian cho FIXED
+        state["mode"] = "PAUSE_WAIT_TIME_FIXED"
+        database.save_user_state(uid, state, cache)
+        fb_service.send_text(uid, "⏳ Bạn muốn nghỉ bao lâu?\n(Gõ VD: `15p`, `30 phút`, `1 tiếng`...)")
+        return
+
+    if "không làm phiền" in msg or "dnd" in msg:
+        # Chuyển sang trạng thái chờ nhập thời gian cho DND
+        state["mode"] = "PAUSE_WAIT_TIME_DND"
+        database.save_user_state(uid, state, cache)
+        fb_service.send_text(uid, "🤫 Chế độ Không làm phiền.\nBạn muốn mình im lặng trong bao lâu?\n(Gõ VD: `30p`, `2h`...)")
+        return
+
+    # 3. Xử lý nhập thời gian (Khi đang chờ)
+    if state["mode"] in ["PAUSE_WAIT_TIME_FIXED", "PAUSE_WAIT_TIME_DND"]:
+        duration = parse_duration(msg)
+        if duration > 0:
+            if state["mode"] == "PAUSE_WAIT_TIME_FIXED":
+                start_fixed_pause(uid, state, cache, duration, msg)
+            else:
+                start_dnd_pause(uid, state, cache, duration, msg)
+        else:
+            fb_service.send_text(uid, "⚠️ Định dạng thời gian chưa đúng.\nHãy gõ số + đơn vị (VD: 15p, 1h).")
+        return
+
+    # Nếu gõ linh tinh khi đang ở Menu
+    fb_service.send_text(uid, "Vui lòng chọn chế độ nghỉ hoặc gõ thời gian.", 
+                         buttons=["Nghỉ tự do", "Nghỉ giải lao", "Không làm phiền"])
+
+# --- CÁC HÀM KHỞI ĐỘNG CHẾ ĐỘ NGHỈ ---
+
+def start_indefinite_pause(uid, state, cache):
+    """Chế độ 1: Nghỉ không thời hạn (Nhắc mỗi 30p)"""
+    state["mode"] = "PAUSED"
+    state["pause_info"] = {
+        "type": TYPE_INDEFINITE,
+        "start_at": common.get_ts(),
+        "last_remind": common.get_ts()
+    }
+    database.save_user_state(uid, state, cache)
+    fb_service.send_text(uid, "👌 Ok, nghỉ thoải mái nhé.\nMỗi 30 phút mình sẽ hỏi thăm bạn một lần.", buttons=["Học tiếp"])
+
+def start_fixed_pause(uid, state, cache, duration, time_str):
+    """Chế độ 2: Nghỉ có thời hạn (Nhắc tại n/2)"""
+    state["mode"] = "PAUSED"
+    state["pause_info"] = {
+        "type": TYPE_FIXED,
+        "start_at": common.get_ts(),
+        "duration": duration,
+        "end_at": common.get_ts() + duration,
+        "halfway_reminded": False # Cờ đánh dấu đã nhắc giữa giờ chưa
+    }
+    database.save_user_state(uid, state, cache)
+    fb_service.send_text(uid, f"⏳ Ok, nghỉ giải lao **{time_str}**.\nMình sẽ gọi khi được một nửa thời gian nhé.", buttons=["Học tiếp"])
+
+def start_dnd_pause(uid, state, cache, duration, time_str):
+    """Chế độ 3: Không làm phiền (Im lặng tuyệt đối)"""
+    state["mode"] = "PAUSED"
+    state["pause_info"] = {
+        "type": TYPE_DND,
+        "start_at": common.get_ts(),
+        "end_at": common.get_ts() + duration
+    }
+    database.save_user_state(uid, state, cache)
+    fb_service.send_text(uid, f"🤫 Đã bật DND trong **{time_str}**.\nMình sẽ không làm phiền cho đến khi hết giờ.", buttons=["Hủy DND"])
+
+def resume(uid, state, cache):
+    """Hủy nghỉ, quay lại học"""
+    if state.get("mode") == "IDLE":
+        fb_service.send_text(uid, "Gõ 'Bắt đầu' để học nhé.", buttons=["Bắt đầu"])
+        return
+
     state["mode"] = "AUTO" 
     state["pause_info"] = None
     state["waiting"] = False 
-    state["next_time"] = 0 
     
     database.save_user_state(uid, state, cache)
-    fb_service.send_text(uid, "👋 Mừng bạn quay lại! Chiến tiếp nào.")
+    fb_service.send_text(uid, "👋 Welcome back! Học tiếp thôi nào.")
     
-    # Gọi ngay từ vựng tiếp theo
     from logic import learning
     learning.send_next_word(uid, state, cache)
+
+# --- UTILS ---
+def parse_duration(text):
+    """Chuyển đổi text (15p, 1h) thành giây"""
+    match = re.search(r'(\d+)\s*(p|phút|m|h|giờ|tiếng)', text)
+    if match:
+        amount = int(match.group(1))
+        unit = match.group(2)
+        if unit in ['h', 'giờ', 'tiếng']:
+            return amount * 3600
+        else: # p, phút, m
+            return amount * 60
+    return 0
