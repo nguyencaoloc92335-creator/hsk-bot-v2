@@ -7,7 +7,8 @@ from fastapi.responses import PlainTextResponse
 
 import database
 import config
-from logic import router, common, learning, quiz
+# [CẬP NHẬT] Thêm 'pause' vào dòng import
+from logic import router, common, learning, quiz, pause
 from services import fb_service
 
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +45,41 @@ async def run_scan_logic():
 
                 # --- A. LOGIC HẸN GIỜ (KHI KHÔNG NGỦ) ---
                 if not is_sleeping:
+                    
+                    # === [MỚI] XỬ LÝ CHẾ ĐỘ TẠM DỪNG (PAUSED) ===
+                    if mode == "PAUSED":
+                        pause_info = s.get("pause_info", {})
+                        if not pause_info: 
+                            # Nếu dữ liệu lỗi, tự động đưa về AUTO để học tiếp
+                            s["mode"] = "AUTO"
+                            database.save_user_state(uid, s, USER_CACHE)
+                            continue
+
+                        p_type = pause_info.get("type", "INDEFINITE")
+                        
+                        # 1. Trường hợp: Nghỉ có hẹn giờ (VD: Nghỉ 30p)
+                        if p_type == "FIXED":
+                            end_at = pause_info.get("end_at", 0)
+                            if now_ts >= end_at:
+                                fb_service.send_text(uid, "⏰ **HẾT GIỜ NGHỈ RỒI!**\nQuay lại học tiếp nhé! 💪")
+                                # Gọi lại user dậy học bài
+                                pause.resume(uid, s, USER_CACHE)
+                        
+                        # 2. Trường hợp: Nghỉ không hẹn giờ -> Nhắc mỗi 30p
+                        else:
+                            last_rem = pause_info.get("last_remind", 0)
+                            # 30 phút = 1800 giây
+                            if (now_ts - last_rem) >= 1800:
+                                fb_service.send_text(uid, "👋 **Bạn đã nghỉ 30 phút rồi.**\nSẵn sàng học tiếp chưa? Gõ 'Tiếp' để quay lại nhé.", buttons=["Tiếp tục"])
+                                # Cập nhật lại thời gian nhắc để không spam
+                                pause_info["last_remind"] = now_ts
+                                s["pause_info"] = pause_info
+                                database.save_user_state(uid, s, USER_CACHE)
+                        
+                        # Khi đang PAUSED thì bỏ qua các logic nhắc nhở IDLE phía dưới
+                        continue 
+                    # ==============================================
+
                     # 1. Short Break
                     if mode == "SHORT_BREAK":
                         if now_ts >= next_time:
@@ -76,30 +112,26 @@ async def run_scan_logic():
                     # Chỉ nhắc khi Mode là: AUTO (đang chờ), QUIZ (đang thi), REVIEWING (đang xem list)
                     target_modes = ["AUTO", "QUIZ", "REVIEWING"]
                     
-                    # Kiểm tra kỹ hơn: AUTO thì phải đang waiting=True mới nhắc
                     need_remind = False
                     if mode in target_modes:
                         if mode == "AUTO":
                             if s.get("waiting", False): need_remind = True
                         else:
-                            need_remind = True # QUIZ và REVIEWING luôn cần user phản hồi
+                            need_remind = True 
                     
                     if need_remind:
-                        last_act = s.get("last_interaction", now_ts) # Lần cuối user nhắn
-                        last_rem = s.get("last_remind", 0)           # Lần cuối bot nhắc
+                        last_act = s.get("last_interaction", now_ts)
+                        last_rem = s.get("last_remind", 0)
                         
-                        # Nếu đã im lặng hơn 10 phút (600s)
-                        if (now_ts - last_act) >= 600:
-                            # Và khoảng cách với lần nhắc trước cũng > 10 phút (để nhắc lại mỗi 10p)
-                            if (now_ts - last_rem) >= 600:
-                                if mode == "QUIZ":
-                                    fb_service.send_text(uid, "⏰ **Đang thi dở kìa!**\nBạn ơi quay lại làm nốt bài kiểm tra nha. Cố lên! 💪")
-                                else:
-                                    fb_service.send_text(uid, "⏰ **Đừng bỏ cuộc giữa chừng!**\nQuay lại học tiếp đi bạn ơi, đang đà phấn đấu! 🚀")
-                                
-                                # Cập nhật thời gian nhắc gần nhất
-                                s["last_remind"] = now_ts
-                                database.save_user_state(uid, s, USER_CACHE)
+                        # Nếu đã im lặng hơn 10 phút (600s) và chưa nhắc trong 10 phút qua
+                        if (now_ts - last_act) >= 600 and (now_ts - last_rem) >= 600:
+                            if mode == "QUIZ":
+                                fb_service.send_text(uid, "⏰ **Đang thi dở kìa!**\nBạn ơi quay lại làm nốt bài kiểm tra nha. Cố lên! 💪")
+                            else:
+                                fb_service.send_text(uid, "⏰ **Đừng bỏ cuộc giữa chừng!**\nQuay lại học tiếp đi bạn ơi, đang đà phấn đấu! 🚀")
+                            
+                            s["last_remind"] = now_ts
+                            database.save_user_state(uid, s, USER_CACHE)
 
 
                 # --- B. LOGIC HỆ THỐNG (CHẠY KỂ CẢ KHI SẮP NGỦ) ---
