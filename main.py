@@ -7,8 +7,8 @@ from fastapi.responses import PlainTextResponse
 
 import database
 import config
-# Import đầy đủ các module logic cần dùng trong hàm Scan
-from logic import router, common, learning, quiz, pause 
+# Import đầy đủ các module
+from logic import router, common, learning, quiz, pause, system, menu, selection
 from services import fb_service
 
 logging.basicConfig(level=logging.INFO)
@@ -16,13 +16,10 @@ logger = logging.getLogger("HSK_BOT")
 app = FastAPI()
 USER_CACHE = {}
 
-# --- HÀM QUÉT HỆ THỐNG (CORE LOGIC) ---
+# --- HÀM QUÉT HỆ THỐNG GIỮ NGUYÊN ---
 async def run_scan_logic():
-    """Hàm này sẽ chạy mỗi 60 giây để kiểm tra giờ"""
-    
     now_dt = common.get_vn_time()
     current_hour = now_dt.hour
-    current_minute = now_dt.minute
     is_sleeping = 0 <= current_hour < 6
 
     conn = database.get_conn()
@@ -43,27 +40,20 @@ async def run_scan_logic():
                 next_time = s.get("next_time", 0)
                 today = common.get_today_str()
 
-                # --- A. LOGIC HẸN GIỜ (KHI KHÔNG NGỦ) ---
                 if not is_sleeping:
-                    
-                    # === XỬ LÝ CHẾ ĐỘ TẠM DỪNG (PAUSED) ===
+                    # Logic Pause
                     if mode == "PAUSED":
                         pause_info = s.get("pause_info", {})
                         if not pause_info: 
                             s["mode"] = "AUTO"
                             database.save_user_state(uid, s, USER_CACHE)
                             continue
-
                         p_type = pause_info.get("type", "INDEFINITE")
-                        
-                        # 1. Nghỉ có hẹn giờ
                         if p_type == "FIXED":
                             end_at = pause_info.get("end_at", 0)
                             if now_ts >= end_at:
                                 fb_service.send_text(uid, "⏰ **HẾT GIỜ NGHỈ RỒI!**\nQuay lại học tiếp nhé! 💪")
                                 pause.resume(uid, s, USER_CACHE)
-                        
-                        # 2. Nghỉ không hẹn giờ -> Nhắc mỗi 30p
                         else:
                             last_rem = pause_info.get("last_remind", 0)
                             if (now_ts - last_rem) >= 1800:
@@ -71,60 +61,52 @@ async def run_scan_logic():
                                 pause_info["last_remind"] = now_ts
                                 s["pause_info"] = pause_info
                                 database.save_user_state(uid, s, USER_CACHE)
-                        
                         continue 
-                    # ==============================================
 
-                    # 1. Short Break
+                    # Logic Short Break
                     if mode == "SHORT_BREAK":
                         if now_ts >= next_time:
                             fb_service.send_text(uid, "🔔 **HẾT GIỜ GIẢI LAO!**\nQuay lại học tiếp nhé.")
-                            s["mode"] = "AUTO"
-                            s["waiting"] = False
-                            USER_CACHE[uid] = s
+                            s["mode"] = "AUTO"; s["waiting"] = False
                             database.save_user_state(uid, s, USER_CACHE)
                             learning.send_next_word(uid, s, USER_CACHE)
                             continue
 
-                    # 2. Pre Quiz
+                    # Logic Pre Quiz
                     if mode == "PRE_QUIZ":
                         if now_ts >= next_time:
                             fb_service.send_text(uid, "🔔 **HẾT GIỜ GIẢI LAO!**\nBắt đầu bài kiểm tra 12 từ vừa học nhé.")
-                            USER_CACHE[uid] = s
                             quiz.start_quiz_level(uid, s, USER_CACHE, 1)
                             continue
                     
-                    # 3. Chào buổi sáng (06:01)
-                    if current_hour == 6 and current_minute == 1:
+                    # Logic Chào sáng
+                    if current_hour == 6 and now_dt.minute == 1:
                         if s.get("last_greet") != today:
                             fb_service.send_text(uid, "☀️ **06:01 - CHÀO BUỔI SÁNG**\nChúc bạn ngày mới tốt lành! Gõ 'Bắt đầu' để học nhé.")
                             s["last_greet"] = today
                             database.save_user_state(uid, s, USER_CACHE)
 
-                    # 4. IDLE REMINDER
+                    # Logic Reminder
                     target_modes = ["AUTO", "QUIZ", "REVIEWING"]
                     need_remind = False
                     if mode in target_modes:
                         if mode == "AUTO":
                             if s.get("waiting", False): need_remind = True
-                        else:
-                            need_remind = True 
+                        else: need_remind = True 
                     
                     if need_remind:
                         last_act = s.get("last_interaction", now_ts)
                         last_rem = s.get("last_remind", 0)
-                        
                         if (now_ts - last_act) >= 600 and (now_ts - last_rem) >= 600:
                             if mode == "QUIZ":
                                 fb_service.send_text(uid, "⏰ **Đang thi dở kìa!**\nBạn ơi quay lại làm nốt bài kiểm tra nha. Cố lên! 💪")
                             else:
                                 fb_service.send_text(uid, "⏰ **Đừng bỏ cuộc giữa chừng!**\nQuay lại học tiếp đi bạn ơi, đang đà phấn đấu! 🚀")
-                            
                             s["last_remind"] = now_ts
                             database.save_user_state(uid, s, USER_CACHE)
 
-                # 5. Chúc ngủ ngon (23:59)
-                if current_hour == 23 and current_minute == 59:
+                # Logic Chúc ngủ ngon
+                if current_hour == 23 and now_dt.minute == 59:
                     if s.get("last_goodnight") != today:
                         fb_service.send_text(uid, "🌙 **23:59 RỒI**\nChúc bạn ngủ ngon và hẹn gặp lại sáng mai! 💤")
                         s["last_goodnight"] = today
@@ -135,7 +117,6 @@ async def run_scan_logic():
     finally:
         database.release_conn(conn)
 
-# --- BACKGROUND TIMER ---
 @app.on_event("startup")
 async def startup_event():
     database.init_and_sync_db()
@@ -147,11 +128,8 @@ async def background_timer():
         await asyncio.sleep(60)
         await run_scan_logic()
 
-# --- API ENDPOINTS ---
-
 @app.get("/")
-def home():
-    return PlainTextResponse("HSK Bot Running with Modular Logic")
+def home(): return PlainTextResponse("HSK Bot Running Modular")
 
 @app.get("/trigger_scan")
 async def trigger_scan_manual():
